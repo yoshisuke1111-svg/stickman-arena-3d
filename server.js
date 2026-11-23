@@ -251,7 +251,9 @@ function tick(room,dt) {
     let vx=(Number(!!k.d)-Number(!!k.a)),vz=(Number(!!k.w)-Number(!!k.s));
     const length=Math.hypot(vx,vz)||1;vx/=length;vz/=length;
     const sin=Math.sin(p.facing),cos=Math.cos(p.facing);
-    let dx=vx*cos+vz*sin,dz=vz*cos-vx*sin;
+    // Screen-relative lateral movement: camera faces (sin(facing), 0, cos(facing)).
+    // Camera-right is (-cos(facing), 0, sin(facing)), not the reverse.
+    let dx=-vx*cos+vz*sin,dz=vz*cos+vx*sin;
     p.moveAmount=(Number(!!k.w)+Number(!!k.s)+Number(!!k.a)+Number(!!k.d))?1:0;
     if(p.dashTime>0){
       p.dashTime=Math.max(0,p.dashTime-dt);dx=Math.sin(p.facing);dz=Math.cos(p.facing);
