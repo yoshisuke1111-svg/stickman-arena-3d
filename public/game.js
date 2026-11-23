@@ -191,13 +191,42 @@ function syncWorld(players,shots,bombStates=[]){
     bulletIds.add(p.id);
     let b=bullets.get(p.id);
     if(!b){
-      const mesh=new THREE.Mesh(new THREE.SphereGeometry(.17,10,8),new THREE.MeshBasicMaterial({color:p.color}));
-      const light=new THREE.PointLight(p.color,2.7,3);scene.add(mesh,light);
-      b={mesh,light};bullets.set(p.id,b);
+      const group=new THREE.Group();
+      const color=p.kind==='dragon'?'#64f3ff':p.kind==='axeWave'?'#4bf3db':p.kind==='slash'?'#9ceeff':p.color;
+      const glowMaterial=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.87,side:THREE.DoubleSide,depthWrite:false});
+      if(p.kind==='dragon'){
+        // Curved original cyan dragon-energy ribbon, with a head and two horns.
+        const points=[];
+        for(let i=0;i<=12;i++){const t=i/12;points.push(new THREE.Vector3(Math.sin(t*12)*(.2+t*.26),Math.cos(t*10)*.22,1-t*3.4));}
+        const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),28,.12,6,false),glowMaterial);
+        group.add(tube);
+        const head=new THREE.Mesh(new THREE.ConeGeometry(.38,.75,7),glowMaterial);head.rotation.x=Math.PI/2;head.position.z=1.34;group.add(head);
+        for(const side of [-1,1]){
+          const horn=new THREE.Mesh(new THREE.ConeGeometry(.095,.55,5),glowMaterial);
+          horn.rotation.z=side*.62;horn.position.set(side*.26,.33,1.17);group.add(horn);
+        }
+      }else if(p.kind==='slash'||p.kind==='axeWave'){
+        const crescent=new THREE.Mesh(new THREE.TorusGeometry(p.kind==='axeWave'?1.0:.85,.10,7,36,Math.PI*1.25),glowMaterial);
+        crescent.rotation.set(0,0,-.75);group.add(crescent);
+        const inner=new THREE.Mesh(new THREE.TorusGeometry(.70,.028,5,28,Math.PI*1.2),glowMaterial);
+        inner.rotation.z=-.7;group.add(inner);
+      }else{
+        const core=new THREE.Mesh(new THREE.SphereGeometry(.2,12,8),new THREE.MeshBasicMaterial({color:p.color}));
+        group.add(core);
+      }
+      const light=new THREE.PointLight(color,3.1,5);group.add(light);scene.add(group);
+      b={group,kind:p.kind};bullets.set(p.id,b);
     }
-    b.mesh.position.set(p.x,p.y,p.z);b.light.position.copy(b.mesh.position);
+    b.group.position.set(p.x,p.y,p.z);
+    b.group.rotation.y=p.f;
+    b.group.rotation.z=p.kind==='dragon'?Math.sin(elapsed*16)*.08:0;
+    if(p.kind==='dragon')b.group.scale.setScalar(1+Math.sin(elapsed*13)*.07);
   }
-  for(const [id,b] of bullets)if(!bulletIds.has(id)){scene.remove(b.mesh,b.light);b.mesh.geometry.dispose();b.mesh.material.dispose();bullets.delete(id);}
+  for(const [id,b] of bullets)if(!bulletIds.has(id)){
+    scene.remove(b.group);
+    b.group.traverse(o=>{if(o.isMesh){o.geometry.dispose();o.material.dispose();}});
+    bullets.delete(id);
+  }
   const bombIds=new Set();
   for(const p of bombStates){
     bombIds.add(p.id);
@@ -240,8 +269,37 @@ function animateEffects(dt){
   for(let i=effects.length-1;i>=0;i--){const e=effects[i];e.t+=dt;const life=1-e.t/e.max;
     for(const bit of e.bits){bit.mesh.position.addScaledVector(bit.v,dt);bit.mesh.material.opacity=Math.max(0,life);bit.mesh.rotation.x+=dt*9;bit.mesh.rotation.y+=dt*13;}
     if(e.ring){const scale=1+e.t*5;e.ring.scale.setScalar(scale);e.ring.material.opacity=Math.max(0,life*.8);}
+    if(e.extra)for(const m of e.extra){m.material.opacity=Math.max(0,life*.87);m.scale.setScalar(1+e.t*(e.heavy?3.5:1.5));m.rotation.z+=dt*(e.heavy?1:3);}
     if(e.t>=e.max){scene.remove(e.group);e.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();obj.material.dispose();}});effects.splice(i,1);}
   }
+}
+// Weapon-specific arcs, ground shock rings, and dramatic impact flashes.
+function castEffect(e){
+  const model=playerModels.get(e.id);
+  const x=Number.isFinite(e.x)?e.x:(model?.display.x??0);
+  const y=Number.isFinite(e.y)?e.y:((model?.display.y??0)+1.2);
+  const z=Number.isFinite(e.z)?e.z:(model?.display.z??0);
+  const kind=e.variant||e.kind||e.weapon||'blade';
+  const heavy=/hammer|quake|bang|whirl|cyclone|Shock/i.test(kind);
+  const color=/dragon/i.test(kind)?'#69f0ff':/bigBang/i.test(kind)?'#ffba5a':e.color||'#58e9f3';
+  const group=new THREE.Group();group.position.set(x,heavy?.15:y,z);scene.add(group);
+  const meshes=[];
+  const glowing=(size,thickness,angle)=>{
+    const mesh=new THREE.Mesh(new THREE.TorusGeometry(size,thickness,8,48,Math.PI*(heavy?1.9:1.32)),
+      new THREE.MeshBasicMaterial({color,transparent:true,opacity:.88,side:THREE.DoubleSide,depthWrite:false}));
+    mesh.rotation.z=angle;mesh.rotation.y=e.f||model?.display.f||0;
+    group.add(mesh);meshes.push(mesh);return mesh;
+  };
+  if(heavy){
+    for(let i=0;i<2;i++){
+      const ring=glowing(.8+i*.38,.07+i*.025,0);ring.rotation.x=-Math.PI/2;
+    }
+  }else{
+    const arc=glowing(kind==='swordArc'?1.9:kind==='axeWave'?2.35:1.55,.12,-.3);
+    arc.rotation.y=e.f||model?.display.f||0;
+    const second=glowing(kind==='swordArc'?1.7:1.35,.045,-.3);second.rotation.y=arc.rotation.y;
+  }
+  effects.push({group,bits:[],ring:null,extra:meshes,t:0,max:heavy?.85:.45,heavy});
 }
 const previewGroup=new THREE.Group();scene.add(previewGroup);
 function makePreview(){
@@ -354,8 +412,14 @@ function updateStats(m,me){
 function addFeed(t){const div=document.createElement('div');div.textContent=t;$('killFeed').prepend(div);setTimeout(()=>div.remove(),3700);while($('killFeed').children.length>5)$('killFeed').lastChild.remove();}
 function handleEvents(events){
   for(const e of events){
-    if(e.type==='hit'){burst('hit',e.x,e.y,e.z,e.color);playSound(480,.065,'triangle');}
-    else if(e.type==='super'){burst('super',e.x,e.y,e.z,e.color);playSound(170,.3,'sawtooth');}
+    if(e.type==='hit'){burst('hit',e.x,e.y,e.z,e.color);playSound(380,.10,'triangle');}
+    else if(e.type==='attack'){
+      if(['blade','katana','axe','hammer'].includes(e.weapon))castEffect({...e,variant:e.weapon});
+      playSound(e.weapon==='hammer'?180:360,.12,'triangle');
+    }
+    else if(e.type==='skillcast'){castEffect(e);playSound(e.weapon==='katana'?760:265,.22,'sawtooth');}
+    else if(e.type==='impact'){castEffect(e);burst('super',e.x,e.y,e.z,e.color);}
+    else if(e.type==='super'){castEffect(e);burst('super',e.x,e.y,e.z,e.color);playSound(140,.36,'sawtooth');}
     else if(e.type==='explode'){burst('explode',e.x,e.y,e.z,e.color||'#ffba66');playSound(95,.45,'sawtooth');}
     else if(e.type==='ko'){burst('ko',e.x,1.2,e.z,'#ff789b');addFeed(e.by?`${e.by} ⚔ ${e.name}`:`${e.name} が落下した`);playSound(110,.28,'triangle');}
     else if(e.type==='join'&&joined&&phase==='lobby'){toast(e.name+' が参加');}
@@ -466,12 +530,18 @@ function animate(dt){
     const speed=p.dead?0:p.m;
     m.walkPhase+=dt*(5+speed*8);
     const swingWalk=Math.sin(m.walkPhase)*speed*.64;
-    m.leftLeg.rotation.x=swingWalk;m.rightLeg.rotation.x=-swingWalk;
-    m.leftArm.rotation.x=-swingWalk*.65-.14;
-    m.rightArm.rotation.x=-1.0+swingWalk*.35-(p.a>0?Math.sin((.49-p.a)*9)*.85:0);
-    m.root.rotation.z=p.dead?Math.min(1.15,m.root.rotation.z+dt*5):THREE.MathUtils.lerp(m.root.rotation.z,p.hit>0?.24:0,dt*11);
+    const hitLean=(p.stun||0)*Math.sin(elapsed*13+Number(p.id)*2);
+    const flail=(p.spin||0)*Math.sin(elapsed*17+Number(p.id));
+    m.leftLeg.rotation.x=swingWalk+hitLean*.52;m.rightLeg.rotation.x=-swingWalk-hitLean*.38;
+    m.leftLeg.rotation.z=-flail*.28;m.rightLeg.rotation.z=flail*.28;
+    m.leftArm.rotation.x=-swingWalk*.65-.14+hitLean*.65;
+    const strike=p.a>0?Math.sin((.78-p.a)*10)*1.10:0;
+    m.rightArm.rotation.x=-1.0+swingWalk*.48-strike-flail*.40;
+    m.rightArm.rotation.z=Math.sin(elapsed*12+Number(p.id))*Math.min(1,p.a*1.5)+hitLean*.36;
+    m.root.rotation.z=p.dead?Math.min(1.15,m.root.rotation.z+dt*5):THREE.MathUtils.lerp(m.root.rotation.z,hitLean*.46+flail*.20,dt*11);
     if(p.dead)m.root.position.y-=.15;
-    if(p.dash>0)m.root.rotation.x=-.23;else m.root.rotation.x=THREE.MathUtils.lerp(m.root.rotation.x,0,dt*8);
+    const tilt=p.dash>0?-.23:(hitLean*.25+flail*.35);
+    m.root.rotation.x=THREE.MathUtils.lerp(m.root.rotation.x,tilt,dt*8);
     m.ring.visible=!p.dead;
     m.nameSprite.visible=!p.dead;
     m.root.traverse(obj=>{if(obj.isMesh && obj.material?.emissive && obj!==m.ring){obj.material.emissiveIntensity=p.hit>0?1.7:.45;}});
