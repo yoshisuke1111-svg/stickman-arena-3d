@@ -121,21 +121,17 @@ test('bomb explosion deals area damage, gives credit to owner, and spares bystan
 });
 
 
-test('WASD lateral movement follows the camera: A left and D right on screen',()=>{
-  const {api,room,p1,p2}=setup();api.start(room);
-  p1.x=0;p1.z=0;p1.y=0;p1.facing=0;p1.input={d:true};p2.input={};p2.x=9;p2.z=9;
-  api.tick(room,1/30);
-  assert.ok(p1.x<0,'looking toward +Z, screen-right points toward -X');
-  assert.ok(Math.abs(p1.z)<.1);
-  p1.x=0;p1.z=0;p1.input={a:true};
-  api.tick(room,1/30);
-  assert.ok(p1.x>0,'looking toward +Z, screen-left points toward +X');
-  p1.x=0;p1.z=0;p1.facing=Math.PI/2;p1.input={d:true};
-  api.tick(room,1/30);
-  assert.ok(p1.z>0,'when looking toward +X, screen-right points toward +Z');
-  p1.x=0;p1.z=0;p1.input={a:true};
-  api.tick(room,1/30);
-  assert.ok(p1.z<0,'when looking toward +X, screen-left points toward -Z');
+test('WASD always follows the fixed camera, not the weapon heading',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);p2.x=9;p2.z=9;p2.input={};
+ p1.x=0;p1.z=0;p1.facing=0;p1.input={d:true};api.tick(room,1/30);
+ const right=[p1.x,p1.z];assert.ok(right[0]<0&&right[1]<0);
+ p1.x=0;p1.z=0;p1.facing=Math.PI;p1.input={d:true};api.tick(room,1/30);
+ assert.ok(Math.abs(p1.x-right[0])<1e-7);
+ assert.ok(Math.abs(p1.z-right[1])<1e-7);
+ p1.x=0;p1.z=0;p1.input={a:true};api.tick(room,1/30);
+ assert.ok(p1.x>0&&p1.z>0);
+ p1.x=0;p1.z=0;p1.input={w:true};api.tick(room,1/30);
+ assert.ok(p1.x<0&&p1.z>0);
 });
 
 test('katana launches a luminous dragon projectile and hits at range',()=>{
@@ -194,30 +190,33 @@ test('high knockback stays outside solid cover rather than tunneling through it'
   assert.ok(p1.x<=-5.75-.43,`x=${p1.x}`);
 });
 
-test('B: mouse hold thrust accelerates and releasing brakes',()=>{
+test('WASD moves, but legacy mouse thrust cannot accelerate anyone',()=>{
  const {api,room,p1,p2}=setup();api.start(room);
- p1.x=0;p1.z=0;p1.facing=0;p1.pitch=0;p1.input={thrust:true};p1.invuln=0;
- p2.x=9;p2.z=9;p2.input={};
- for(let i=0;i<30;i++)api.tick(room,1/30);
- assert.ok(p1.z>2.5);const old=p1.z;p1.input={};
- for(let i=0;i<45;i++)api.tick(room,1/30);
- assert.ok(p1.z-old<1.5);
+ p1.x=0;p1.z=0;p1.input={attack:true,thrust:true};p2.x=9;p2.z=9;p2.input={};
+ for(let i=0;i<16;i++)api.tick(room,1/30);
+ assert.ok(Math.hypot(p1.x,p1.z)<.01);
+ p1.input={w:true};for(let i=0;i<16;i++)api.tick(room,1/30);
+ assert.ok(Math.hypot(p1.x,p1.z)>2.5);
 });
-test('B: weapon aim heading determines thrust direction',()=>{
+test('Space jumps only once per key press',()=>{
  const {api,room,p1,p2}=setup();api.start(room);
- p1.x=0;p1.z=0;p1.facing=Math.PI/2;p1.pitch=0;p1.input={thrust:true};
- p2.x=9;p2.z=9;p2.input={};
- for(let i=0;i<10;i++)api.tick(room,1/30);
- assert.ok(p1.x>.6);assert.ok(Math.abs(p1.z)<.1);
+ p1.x=0;p1.z=0;p1.input={jump:true};p2.x=10;p2.z=10;p2.input={};
+ for(let i=0;i<50;i++)api.tick(room,1/30);
+ assert.ok(p1.grounded);assert.equal(p1.y,0);
+ p1.input={};api.tick(room,1/30);
+ p1.input={jump:true};api.tick(room,1/30);
+ assert.ok(p1.y>0);
 });
-test('B: upward aim and held thrust jump without infinite flight',()=>{
+test('CPU uses human movement speed without any independent boost',()=>{
  const {api,room,p1,p2}=setup();api.start(room);
- p1.x=0;p1.z=0;p1.pitch=.85;p1.facing=0;p1.input={thrust:true};p1.grounded=true;
- p2.x=9;p2.z=9;p2.input={};
- for(let i=0;i<10;i++)api.tick(room,1/30);
- assert.ok(p1.y>1);
- for(let i=0;i<300;i++)api.tick(room,1/30);
- assert.ok(p1.y<25);
+ p1.x=0;p1.z=0;p1.input={w:true};p1.facing=0;
+ p2.isBot=true;p2.x=0;p2.z=0;p2.facing=0;
+ const before=[p2.x,p2.z];api.tick(room,1/30);
+ assert.equal(p2.input.thrust,undefined);
+ assert.ok(p2.moveAmount<=1);
+ const humanSpeed=Math.hypot(p1.x,p1.z)*30;
+ const botSpeed=Math.hypot(p2.x-before[0],p2.z-before[1])*30;
+ assert.ok(botSpeed<=humanSpeed+.001);
 });
 test('sword skill propels fighter instead of launching a slash',()=>{
  const {api,room,p1}=setup();api.start(room);p1.weapon='blade';
