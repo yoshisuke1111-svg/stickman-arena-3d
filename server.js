@@ -29,6 +29,10 @@ const WPN = {
   bomb:    { damage: 55, range: 3.6, cd: 1.7, push: 15.0 }
 };
 const BOMB_FUSE=1.45, BOMB_RADIUS=3.6;
+// Mechanics inferred from supplied footage. Damage/cooldowns are prototype values.
+const SKILL_COOLDOWN={blade:5,hammer:7.5,blaster:5.5,katana:6,axe:6.5,bomb:7};
+const SUPER_COOLDOWN={blade:18,hammer:20,blaster:17,katana:19,axe:19,bomb:18};
+const AXE_SKILLS=['cleave','whirl','wave'];
 const rooms = new Map();
 const random = (a,b) => Math.random()*(b-a)+a;
 const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
@@ -57,14 +61,14 @@ function spawnPoint(room,p) {
   }
   p.x=chosen[0]+random(-.45,.45); p.z=chosen[1]+random(-.45,.45); p.y=0;
   p.vy=0; p.kvx=0; p.kvz=0; p.hp=100; p.dead=false; p.respawnIn=0; p.invuln=1.25;
-  p.facing=Math.atan2(-p.x,-p.z); p.swing=0; p.dashTime=0; p.hazardNext=0;
+  p.facing=Math.atan2(-p.x,-p.z); p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
 }
 function makePlayer(name,ws,isBot=false) {
   return {
     id: String(++playerCounter), name: cleanName(name), ws, isBot, color:COLORS[(playerCounter-1)%COLORS.length],
     weapon:'blade', x:0,y:0,z:0,vy:0,kvx:0,kvz:0, facing:0, hp:100,
     input:{}, moveAmount:0, grounded:true, dead:false, respawnIn:0, invuln:0,
-    attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0,
+    attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0, stagger:0, spin:0,
     hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null
   };
 }
@@ -77,11 +81,11 @@ function createRoom() {
 function packPlayer(p) {
   return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),
     hp:Math.ceil(p.hp),dead:p.dead,k:p.kills,d:p.deaths,s:p.score,bot:p.isBot,a:+p.swing.toFixed(2),hit:+p.hit.toFixed(2),
-    m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2)};
+    m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2)};
 }
 function packState(room) {
   return {t:'state',room:room.code,phase:room.phase,host:room.host,time:Math.max(0,Math.ceil(room.timer)),
-    players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color})),
+    players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',f:+Math.atan2(b.dx,b.dz).toFixed(2)})),
     bombs:room.bombs.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),fuse:+b.fuse.toFixed(2),color:b.color})),
     hazard:room.hazardActive, events:room.events.splice(0)};
 }
@@ -122,7 +126,9 @@ function die(room,p,killer) {
 }
 function damage(room,target,from,dmg,push=5,origin=from) {
   if(target.dead || target.invuln>0 || room.phase!=='battle' || (from && from.id===target.id)) return false;
-  target.hp-=dmg;target.hit=.2;
+  target.hp-=dmg;target.hit=.38;
+  target.stagger=Math.max(target.stagger, Math.min(.9,.16+push*.035));
+  target.spin=Math.max(target.spin,Math.min(1.6,push*.064));
   let dx=origin ? target.x-origin.x : target.x;
   let dz=origin ? target.z-origin.z : target.z;
   let mag=Math.hypot(dx,dz);
@@ -154,7 +160,11 @@ function attack(room,p) {
       if(d>w.range)continue;
       const a=Math.atan2(q.x-p.x,q.z-p.z);
       const diff=Math.atan2(Math.sin(a-p.facing),Math.cos(a-p.facing));
-      if(Math.abs(diff)<=w.arc/2 && !isBlocked(p,q)) damage(room,q,p,w.damage,w.push);
+      if(Math.abs(diff)<=w.arc/2 && !isBlocked(p,q)) {
+        const momentum=Math.hypot(p.kvx,p.kvz)+(p.moveAmount?3:0);
+        const impact=1+Math.min(.35,momentum*.027)+(p.y>.6?.08:0);
+        damage(room,q,p,Math.round(w.damage*impact),w.push*(1+Math.min(.35,momentum*.032)));
+      }
     }
   }
 }
@@ -197,16 +207,80 @@ function advanceBombs(room,dt) {
     if(b.fuse<=0 || b.y<-8){detonate(room,b);room.bombs.splice(i,1);}
   }
 }
+// Server-owned moving energy strikes and weapon-specific abilities.
+function wave(room,p,kind,offset=0,opts={}) {
+  if(room.projectiles.length>=110)room.projectiles.shift();
+  const angle=p.facing+offset;
+  const speed=opts.speed??(kind==='dragon'?18:kind==='axeWave'?15:16);
+  room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,kind,
+    x:p.x+Math.sin(angle)*1.05,y:p.y+(opts.height??1.35),z:p.z+Math.cos(angle)*1.05,
+    dx:Math.sin(angle),dz:Math.cos(angle),speed,life:opts.life??1.2,
+    radius:opts.radius??.95,damage:opts.damage??24,push:opts.push??11,
+    pierce:opts.pierce??false,hitIds:new Set(),color:opts.color||p.color});
+}
+function areaImpact(room,p,radius,amount,push,kind) {
+  event(room,'impact',{id:p.id,kind,weapon:p.weapon,x:p.x,y:p.y+1,z:p.z,color:p.color,radius});
+  for(const q of room.players.values()){
+    if(q.id===p.id||q.dead||Math.abs(p.y-q.y)>3||dist(p,q)>radius||isBlocked(p,q))continue;
+    const falloff=Math.max(.52,1-dist(p,q)/(radius*1.9));
+    damage(room,q,p,Math.round(amount*falloff),push*falloff);
+  }
+}
 function skill(room,p) {
-  if(p.skillCd>0 || p.dead || room.phase!=='battle') return;
-  p.skillCd=5.5; p.dashTime=.32;p.dashHits=new Set();p.invuln=Math.max(p.invuln,.28);
-  event(room,'dash',{id:p.id});
+  if(p.skillCd>0||p.dead||room.phase!=='battle')return;
+  p.skillCd=SKILL_COOLDOWN[p.weapon];p.swing=.55;
+  let variant='';
+  switch(p.weapon){
+    case 'blade':
+      variant='swordArc';wave(room,p,'slash',0,{radius:1.1,damage:25,push:8,life:.78,speed:16});break;
+    case 'katana':
+      variant='dragon';wave(room,p,'dragon',0,{radius:1.15,damage:36,push:13,life:1.6,speed:20,pierce:true,color:'#5ae6ff'});break;
+    case 'hammer':
+      variant='hammerShock';areaImpact(room,p,4.0,31,19,'hammerShock');p.vy=Math.max(p.vy,3.5);break;
+    case 'axe': {
+      variant=AXE_SKILLS[Math.floor(Math.random()*AXE_SKILLS.length)];
+      if(variant==='whirl')areaImpact(room,p,3.65,27,13,'axeWhirl');
+      else if(variant==='wave'){
+        wave(room,p,'axeWave',-.25,{damage:27,push:10,life:.95,color:'#4cefed'});
+        wave(room,p,'axeWave',.25,{damage:27,push:10,life:.95,color:'#4cefed'});
+      } else {
+        p.dashTime=.32;p.dashHits=new Set();
+        areaImpact(room,p,2.7,35,16,'axeCleave');
+      }
+      break;
+    }
+    case 'blaster':
+      variant='spread';for(const angle of [-.22,0,.22])wave(room,p,'blaster',angle,{radius:.55,damage:15,push:4.8,life:1.1,speed:23});break;
+    case 'bomb':
+      variant='cluster';for(const angle of [-.25,0,.25]){
+        if(room.bombs.length>=50)room.bombs.shift();
+        room.bombs.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x:p.x+Math.sin(p.facing+angle)*.8,y:p.y+1.3,z:p.z+Math.cos(p.facing+angle)*.8,
+          vx:Math.sin(p.facing+angle)*9,vy:9,vz:Math.cos(p.facing+angle)*9,fuse:1.05,color:p.color});
+      }break;
+  }
+  event(room,'skillcast',{id:p.id,weapon:p.weapon,variant,x:p.x,y:p.y+1.2,z:p.z,f:p.facing,color:p.color});
 }
 function superAttack(room,p) {
-  if(p.superCd>0 || p.dead || room.phase!=='battle') return;
-  p.superCd=15;p.swing=.48;
-  event(room,'super',{id:p.id,x:p.x,y:p.y,z:p.z,color:p.color});
-  for(const q of room.players.values()) if(q.id!==p.id&&!q.dead&&Math.abs(p.y-q.y)<3&&dist(p,q)<5.1&&!isBlocked(p,q)) damage(room,q,p,31,12);
+  if(p.superCd>0||p.dead||room.phase!=='battle')return;
+  p.superCd=SUPER_COOLDOWN[p.weapon];p.swing=.78;
+  let variant='';
+  switch(p.weapon){
+    case 'blade':
+      variant='swordStorm';areaImpact(room,p,4.3,38,15,'swordStorm');
+      for(const a of [-.3,0,.3])wave(room,p,'slash',a,{damage:24,push:8,life:.85});break;
+    case 'katana':
+      variant='dragonStorm';for(const a of [-.3,0,.3])wave(room,p,'dragon',a,{damage:31,push:12,radius:1.1,life:1.65,pierce:true,color:'#65edff'});break;
+    case 'axe':
+      variant='axeCyclone';areaImpact(room,p,5,48,21,'axeCyclone');
+      for(const a of [-.5,0,.5])wave(room,p,'axeWave',a,{damage:32,push:14,life:1.0});break;
+    case 'hammer':
+      variant='quake';areaImpact(room,p,5.8,50,24,'quake');p.vy=Math.max(p.vy,4.5);break;
+    case 'blaster':
+      variant='laserFan';for(const a of [-.36,-.18,0,.18,.36])wave(room,p,'blaster',a,{damage:20,push:7,radius:.8,speed:26,life:1.4});break;
+    case 'bomb':
+      variant='bigBang';areaImpact(room,p,5.4,44,20,'bigBang');break;
+  }
+  event(room,'super',{id:p.id,weapon:p.weapon,variant,x:p.x,y:p.y+1,z:p.z,color:p.color});
 }
 function hitBlock(x,z,y) { return BLOCKS.some(o=>Math.abs(x-o.x)<o.w/2+.15 && Math.abs(z-o.z)<o.d/2+.15 && y<o.h); }
 function resolveBlocks(p) {
@@ -232,8 +306,8 @@ function simulateBot(room,p,dt) {
   p.facing=angle;
   const strafe=Math.sin(room.elapsed*1.8+Number(p.id)*2)*.45;
   p.input={w:d>(['blaster','bomb'].includes(p.weapon)?8:2.5),s:d<(['blaster','bomb'].includes(p.weapon)?4:1.1),a:strafe<-.25,d:strafe>.25,
-    jump:Math.random()<.008,attack:d<(['blaster','bomb'].includes(p.weapon)?11:3.2),skill:d>3&&d<7&&Math.random()<.015,
-    super:d<4.9&&Math.random()<.02};
+    jump:Math.random()<.008,attack:d<(['blaster','bomb'].includes(p.weapon)?11:3.6),skill:d<7&&Math.random()<.03,
+    super:d<7&&Math.random()<.02};
   // Bots already choose a camera-relative movement vector, where W is toward their target.
 }
 function tick(room,dt) {
@@ -244,7 +318,7 @@ function tick(room,dt) {
   room.hazardActive=(cycle>=7.5 && cycle<9);
   for(const p of room.players.values()) {
     p.attackCd=Math.max(0,p.attackCd-dt); p.skillCd=Math.max(0,p.skillCd-dt);p.superCd=Math.max(0,p.superCd-dt);
-    p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.invuln=Math.max(0,p.invuln-dt);
+    p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.stagger=Math.max(0,p.stagger-dt);p.spin=Math.max(0,p.spin-dt*1.9);p.invuln=Math.max(0,p.invuln-dt);
     if(p.dead){p.respawnIn-=dt;if(p.respawnIn<=0)spawnPoint(room,p);continue;}
     if(p.isBot) simulateBot(room,p,dt);
     const k=p.input||{};
@@ -262,15 +336,28 @@ function tick(room,dt) {
       }
     }
     const speed=p.dashTime>0?19:5.8;
-    p.x+=(dx*speed+p.kvx)*dt; p.z+=(dz*speed+p.kvz)*dt;
+    // Substeps prevent fast knockback and dashes from tunnelling into cover.
+    const moveX=(dx*speed+p.kvx)*dt,moveZ=(dz*speed+p.kvz)*dt;
+    const subdivisions=Math.max(1,Math.ceil(Math.hypot(moveX,moveZ)/.22));
+    for(let i=0;i<subdivisions;i++){
+      p.x+=moveX/subdivisions;p.z+=moveZ/subdivisions;resolveBlocks(p);
+    }
     p.kvx*=Math.exp(-5*dt);p.kvz*=Math.exp(-5*dt);
-    resolveBlocks(p);
     const overFloor = Math.abs(p.x)<=BOUNDS && Math.abs(p.z)<=BOUNDS;
     if(k.jump&&p.grounded){p.vy=8.5;p.grounded=false;}
+    const oldY=p.y;
     p.vy-=22*dt;p.y+=p.vy*dt;
-    if(overFloor&&p.y<=0){p.y=0;p.vy=0;p.grounded=true;}else p.grounded=false;
+    let floor=overFloor?0:-Infinity;
+    if(p.vy<=0)for(const b of BLOCKS){
+      if(Math.abs(p.x-b.x)<b.w/2-.08 && Math.abs(p.z-b.z)<b.d/2-.08 && oldY>=b.h-.18)
+        floor=Math.max(floor,b.h);
+    }
+    if(p.y<=floor && oldY>=floor-.18){p.y=floor;p.vy=0;p.grounded=true;}
+    else p.grounded=false;
     if(p.y<-9){die(room,p,null);continue;}
-    if(k.attack)attack(room,p);
+    const melee=!['blaster','bomb'].includes(p.weapon);
+    const near=melee&&[...room.players.values()].some(q=>q.id!==p.id&&!q.dead&&dist(p,q)<WPN[p.weapon].range+.5);
+    if(k.attack||(melee&&p.moveAmount>0&&near))attack(room,p);
     if(k.skill)skill(room,p);
     if(k.super)superAttack(room,p);
     if(room.hazardActive && p.y<1.5 && Math.hypot(p.x,p.z)<2.6 && p.hazardNext<=room.elapsed){
@@ -279,13 +366,21 @@ function tick(room,dt) {
     if(p.dashTime===0)p.dashHits.clear();
   }
   for(let i=room.projectiles.length-1;i>=0;i--){
-    const b=room.projectiles[i];b.x+=b.dx*19*dt;b.z+=b.dz*19*dt;b.life-=dt;
+    const b=room.projectiles[i];
+    const speed=b.speed??19;
+    b.x+=b.dx*speed*dt;b.z+=b.dz*speed*dt;b.life-=dt;
+    const radius=b.radius??.65;
     let remove=b.life<=0||Math.abs(b.x)>BOUNDS+2||Math.abs(b.z)>BOUNDS+2||hitBlock(b.x,b.z,b.y);
     if(!remove){
       const owner=room.players.get(b.owner);
-      for(const p of room.players.values()) if(p.id!==b.owner&&!p.dead&&Math.hypot(b.x-p.x,b.z-p.z)<.65&&Math.abs(b.y-(p.y+1.25))<1.4) {
-        if(damage(room,p,owner,17,5))remove=true;
-        if(remove)break;
+      for(const p of room.players.values()){
+        if(p.id===b.owner||p.dead||b.hitIds?.has(p.id))continue;
+        if(Math.hypot(b.x-p.x,b.z-p.z)<radius && Math.abs(b.y-(p.y+1.2))<1.65){
+          if(damage(room,p,owner,b.damage??17,b.push??5)){
+            if(!b.hitIds)b.hitIds=new Set();b.hitIds.add(p.id);
+            if(!b.pierce){remove=true;break;}
+          }
+        }
       }
     }
     if(remove)room.projectiles.splice(i,1);
@@ -309,7 +404,7 @@ const wss=new WebSocketServer({server,path:'/ws',maxPayload:2048});
 wss.on('connection',ws=>{
   ws.isAlive=true;
   ws.on('pong',()=>{ws.isAlive=true;});
-  safeSend(ws,{t:'hello',version:'0.2.0'});
+  safeSend(ws,{t:'hello',version:'0.3.0'});
   ws.on('message',(data)=>{
     let m;
     try {m=JSON.parse(data.toString());} catch {return;}
