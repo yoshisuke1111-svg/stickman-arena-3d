@@ -25,3 +25,13 @@ for (const [relative, contents] of Object.entries(files)) {
   fs.writeFileSync(destination, contents, 'utf8');
 }
 console.log('Restored server.js, public/game.js and public/style.css');
+
+const testCompressed = Buffer.from(
+  fs.readFileSync(path.join(root, 'source-parts', 'tests.br64'), 'utf8').trim(), 'base64'
+);
+const testDigest = crypto.createHash('sha256').update(testCompressed).digest('hex');
+if (testDigest !== 'f662f4ffa29f1f6c47951340e19d29a1a778ab21df3b8d71ae3cc00aab22f66d')
+  throw new Error('Battle tests integrity check failed');
+fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+fs.writeFileSync(path.join(root, 'tests', 'engine.test.js'), brotliDecompressSync(testCompressed));
+console.log('Restored the nine multiplayer battle tests');
