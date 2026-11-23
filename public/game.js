@@ -18,7 +18,8 @@ scene.background = new THREE.Color('#080e1a');
 scene.fog = new THREE.FogExp2('#081323',.018);
 const camera = new THREE.PerspectiveCamera(63,innerWidth/innerHeight,.1,250);
 const clock=new THREE.Clock();
-let camYaw=-.45, camDistance=7, elapsed=0;
+let camYaw=-.45,camPitch=.43,camDistance=7,elapsed=0;
+let aimYaw=-.45,aimPitch=0;
 const targetLook = new THREE.Vector3(0,1.2,0);
 const targetCamera = new THREE.Vector3(13,11,16);
 camera.position.copy(targetCamera);
@@ -109,7 +110,7 @@ function buildFighter(p){
   nameSprite.position.set(0,2.68,0);nameSprite.scale.set(2.7,.7,1);root.add(nameSprite);
   const ring=new THREE.Mesh(new THREE.RingGeometry(.48,.56,40),new THREE.MeshBasicMaterial({color:p.c||'#49edda',transparent:true,opacity:.6,side:THREE.DoubleSide}));
   ring.rotation.x=-Math.PI/2;ring.position.y=.04;root.add(ring);
-  const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f},walkPhase:Math.random()*6.28};
+  const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f,pitch:p.pitch||0,hs:p.hs||0},bodyYaw:p.f,walkPhase:Math.random()*6.28};
   replaceWeapon(model,p.w);labelSprite(model,p);
   return model;
 }
@@ -172,6 +173,12 @@ const playerModels=new Map();
 const bullets=new Map();
 const thrownBombs=new Map();
 const effects=[];
+// An independent 3D guide shows the weapon direction, even when the view orbits.
+const aimGuide=new THREE.Group();scene.add(aimGuide);
+const guideGeometry=new THREE.BufferGeometry();guideGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
+const aimLine=new THREE.Line(guideGeometry,new THREE.LineBasicMaterial({color:'#72ecff',transparent:true,opacity:.62,depthTest:false}));
+const aimDot=new THREE.Mesh(new THREE.OctahedronGeometry(.17),new THREE.MeshBasicMaterial({color:'#95f7ff',transparent:true,opacity:.90,depthTest:false}));
+aimLine.renderOrder=5;aimDot.renderOrder=6;aimGuide.add(aimLine,aimDot);
 let lastPlayers=[];
 function syncWorld(players,shots,bombStates=[]){
   const idSet=new Set();
@@ -218,7 +225,7 @@ function syncWorld(players,shots,bombStates=[]){
       b={group,kind:p.kind};bullets.set(p.id,b);
     }
     b.group.position.set(p.x,p.y,p.z);
-    b.group.rotation.y=p.f;
+    b.group.rotation.y=p.f;b.group.rotation.x=-(p.pitch||0);
     b.group.rotation.z=p.kind==='dragon'?Math.sin(elapsed*16)*.08:0;
     if(p.kind==='dragon')b.group.scale.setScalar(1+Math.sin(elapsed*13)*.07);
   }
@@ -321,8 +328,9 @@ function animatePreview(t){previewGroup.visible=!joined;
 // Network: the Node/WebSocket server owns hit detection, HP, knockback, scores and timers.
 let socket, selfId=null,roomCode='',phase='home',joined=false,isHost=false,latestState=null,localWeapon='blade',reconnectTimer=null;
 let previousHp=100, toastTimer=null,soundEnabled=false,audioCtx=null;
-let keys={w:false,s:false,a:false,d:false,jump:false,attack:false,skill:false,super:false};
-const touch={w:false,s:false,a:false,d:false,jump:false,attack:false,skill:false,super:false};
+let keys={w:false,s:false,a:false,d:false,jump:false,attack:false,thrust:false,skill:false,super:false};
+const viewKeys={w:false,s:false,a:false,d:false};
+const touch={w:false,s:false,a:false,d:false,jump:false,attack:false,thrust:false,skill:false,super:false};
 const weaponNames={blade:'BLADE',hammer:'HAMMER',blaster:'BLASTER',katana:'KATANA',bomb:'BOMB',axe:'AXE'};
 const weaponHotkeys=['blade','hammer','blaster','katana','bomb','axe'];
 function send(packet){if(socket?.readyState===WebSocket.OPEN){socket.send(JSON.stringify(packet));return true;}toast('サーバーに接続していません');return false;}
@@ -460,25 +468,46 @@ function chooseWeapon(weapon){if(!weaponNames[weapon])return;localWeapon=weapon;
   if(joined)send({t:'weapon',weapon});
 }
 for(const btn of document.querySelectorAll('[data-weapon]'))btn.onclick=()=>chooseWeapon(btn.dataset.weapon);
-const keyMap={KeyW:'w',KeyS:'s',KeyA:'a',KeyD:'d',ArrowUp:'w',ArrowDown:'s',ArrowLeft:'a',ArrowRight:'d',Space:'jump',KeyE:'skill',KeyQ:'super'};
+const keyMap={Space:'jump',KeyE:'skill',KeyQ:'super'};
+const orbitMap={KeyW:'w',KeyS:'s',KeyA:'a',KeyD:'d',ArrowUp:'w',ArrowDown:'s',ArrowLeft:'a',ArrowRight:'d'};
 window.addEventListener('keydown',e=>{
-  if(e.target instanceof HTMLInputElement)return;
-  const action=keyMap[e.code];if(action&&joined&&phase==='battle'){keys[action]=true;e.preventDefault();}
-  if(joined&&phase==='battle'&&/^Digit[1-6]$/.test(e.code))chooseWeapon(weaponHotkeys[Number(e.code.slice(-1))-1]);
+  if(e.target instanceof HTMLInputElement||!joined||phase!=='battle')return;
+  const view=orbitMap[e.code];if(view){viewKeys[view]=true;e.preventDefault();}
+  const action=keyMap[e.code];if(action){keys[action]=true;e.preventDefault();}
+  if(e.code==='KeyR'){aimYaw=camYaw;aimPitch=0;toast('武器の向きを視点に合わせた');}
+  if(/^Digit[1-6]$/.test(e.code))chooseWeapon(weaponHotkeys[Number(e.code.slice(-1))-1]);
 });
-window.addEventListener('keyup',e=>{const action=keyMap[e.code];if(action)keys[action]=false;});
-window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;for(const k in touch)touch[k]=false;});
-let mouseTurnId=null,mouseX=0;
+window.addEventListener('keyup',e=>{
+  const view=orbitMap[e.code];if(view)viewKeys[view]=false;
+  const action=keyMap[e.code];if(action)keys[action]=false;
+});
+window.addEventListener('blur',()=>{
+  for(const k in keys)keys[k]=false;
+  for(const k in viewKeys)viewKeys[k]=false;
+  for(const k in touch)touch[k]=false;
+});
+const updateAim=(mx,my)=>{
+  aimYaw-=mx*.0043;
+  aimPitch=THREE.MathUtils.clamp(aimPitch-my*.0043,-1.10,1.20);
+};
 renderer.domElement.addEventListener('pointerdown',e=>{
   if(!joined||phase!=='battle')return;
-  if(e.pointerType==='mouse'&&e.button===0){keys.attack=true;try{renderer.domElement.requestPointerLock?.()?.catch?.(()=>{});}catch{}}
-  else if(e.pointerType==='touch'||e.button===2){mouseTurnId=e.pointerId;mouseX=e.clientX;renderer.domElement.setPointerCapture?.(e.pointerId);}
+  if(e.pointerType==='mouse'&&e.button===0){
+    keys.thrust=true;
+    try{renderer.domElement.requestPointerLock?.()?.catch?.(()=>{});}catch{}
+  }
 });
-renderer.domElement.addEventListener('pointermove',e=>{if(mouseTurnId===e.pointerId){camYaw-=((e.clientX-mouseX)*.007);mouseX=e.clientX;}});
-function clearMouse(e){if(mouseTurnId===e.pointerId)mouseTurnId=null;if(e.button===0)keys.attack=false;}
-renderer.domElement.addEventListener('pointerup',clearMouse);renderer.domElement.addEventListener('pointercancel',clearMouse);
-window.addEventListener('mouseup',()=>keys.attack=false);
-document.addEventListener('mousemove',e=>{if(document.pointerLockElement===renderer.domElement)camYaw-=e.movementX*.003;});
+renderer.domElement.addEventListener('pointermove',e=>{
+  if(joined&&phase==='battle'&&document.pointerLockElement!==renderer.domElement)
+    updateAim(e.movementX||0,e.movementY||0);
+});
+renderer.domElement.addEventListener('pointerup',e=>{if(e.button===0)keys.thrust=false;});
+renderer.domElement.addEventListener('pointercancel',()=>keys.thrust=false);
+window.addEventListener('mouseup',e=>{if(e.button===0)keys.thrust=false;});
+document.addEventListener('mousemove',e=>{
+  if(document.pointerLockElement===renderer.domElement&&joined&&phase==='battle')
+    updateAim(e.movementX,e.movementY);
+});
 renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 renderer.domElement.addEventListener('wheel',e=>{camDistance=Math.max(4.3,Math.min(11,camDistance+Math.sign(e.deltaY)*.48));e.preventDefault();},{passive:false});
 const joystick=$('joystick'),stick=$('stick');let stickId=null;
@@ -502,17 +531,26 @@ for(const b of document.querySelectorAll('[data-touch]')){
 setInterval(()=>{
   if(!joined||phase!=='battle'||socket?.readyState!==WebSocket.OPEN)return;
   const k={};for(const key of Object.keys(keys))k[key]=keys[key]||touch[key];
-  socket.send(JSON.stringify({t:'input',k,yaw:camYaw}));
+  k.thrust=keys.thrust||touch.attack;
+  socket.send(JSON.stringify({t:'input',k,yaw:smallDevice?camYaw:aimYaw,pitch:smallDevice?0:aimPitch}));
 },50);
 
 function animate(dt){
   elapsed+=dt;
+  if(joined&&phase==='battle'){
+    const yawSpeed=1.50,pitchSpeed=.86;
+    if(viewKeys.a)camYaw+=dt*yawSpeed;
+    if(viewKeys.d)camYaw-=dt*yawSpeed;
+    if(viewKeys.w)camPitch=Math.min(1.14,camPitch+dt*pitchSpeed);
+    if(viewKeys.s)camPitch=Math.max(.10,camPitch-dt*pitchSpeed);
+  }
   animatePreview(elapsed);
   const meModel=playerModels.get(selfId);
   if(meModel&&phase==='battle'){
     const p=meModel.display;
     const f=new THREE.Vector3(p.x,p.y+1.2,p.z);
-    const toCam=new THREE.Vector3(p.x-Math.sin(camYaw)*camDistance,p.y+camDistance*.47+1.8,p.z-Math.cos(camYaw)*camDistance);
+    const orbitRadius=camDistance*Math.cos(camPitch);
+    const toCam=new THREE.Vector3(p.x-Math.sin(camYaw)*orbitRadius,p.y+1.3+Math.sin(camPitch)*camDistance,p.z-Math.cos(camYaw)*orbitRadius);
     targetCamera.lerp(toCam,Math.min(1,dt*6));targetLook.lerp(f,Math.min(1,dt*8));
   }else{
     const a=elapsed*.095-.35;
@@ -524,8 +562,13 @@ function animate(dt){
     const p=m.target,d=m.display;
     const t=Math.min(1,dt*12);
     d.x=THREE.MathUtils.lerp(d.x,p.x,t);d.z=THREE.MathUtils.lerp(d.z,p.z,t);d.y=THREE.MathUtils.lerp(d.y,p.y,t);
+    d.pitch=THREE.MathUtils.lerp(d.pitch||0,p.pitch||0,t);d.hs=p.hs||0;
     const diff=Math.atan2(Math.sin(p.f-d.f),Math.cos(p.f-d.f));d.f+=diff*t;
-    m.root.position.set(d.x,d.y,d.z);m.root.rotation.y=d.f;
+    m.root.position.set(d.x,d.y,d.z);
+    const bodyTurn=Math.atan2(Math.sin(d.f-m.bodyYaw),Math.cos(d.f-m.bodyYaw));
+    m.bodyYaw+=bodyTurn*Math.min(1,dt*4.3);m.root.rotation.y=m.bodyYaw;
+    const armTurn=Math.atan2(Math.sin(d.f-m.bodyYaw),Math.cos(d.f-m.bodyYaw));
+    m.rightArm.rotation.y=THREE.MathUtils.clamp(armTurn,-1.4,1.4);
     m.root.visible=true;
     const speed=p.dead?0:p.m;
     m.walkPhase+=dt*(5+speed*8);
@@ -536,8 +579,8 @@ function animate(dt){
     m.leftLeg.rotation.z=-flail*.28;m.rightLeg.rotation.z=flail*.28;
     m.leftArm.rotation.x=-swingWalk*.65-.14+hitLean*.65;
     const strike=p.a>0?Math.sin((.78-p.a)*10)*1.10:0;
-    m.rightArm.rotation.x=-1.0+swingWalk*.48-strike-flail*.40;
-    m.rightArm.rotation.z=Math.sin(elapsed*12+Number(p.id))*Math.min(1,p.a*1.5)+hitLean*.36;
+    m.rightArm.rotation.x=-(d.pitch||0)-strike*.40-flail*.25+(d.hs>0?Math.sin(elapsed*21)*1.4:0);
+    m.rightArm.rotation.z=(d.hs>0?Math.cos(elapsed*21)*1.30:0)+Math.sin(elapsed*12+Number(p.id))*Math.min(1,p.a*.6)+hitLean*.28;
     m.root.rotation.z=p.dead?Math.min(1.15,m.root.rotation.z+dt*5):THREE.MathUtils.lerp(m.root.rotation.z,hitLean*.46+flail*.20,dt*11);
     if(p.dead)m.root.position.y-=.15;
     const tilt=p.dash>0?-.23:(hitLean*.25+flail*.35);
@@ -546,6 +589,15 @@ function animate(dt){
     m.nameSprite.visible=!p.dead;
     m.root.traverse(obj=>{if(obj.isMesh && obj.material?.emissive && obj!==m.ring){obj.material.emissiveIntensity=p.hit>0?1.7:.45;}});
     if(p.inv>0&&p.inv<1.2)m.root.visible=Math.floor(elapsed*14)%2===0;
+  }
+  const me=playerModels.get(selfId);
+  aimGuide.visible=!!me&&joined&&phase==='battle';
+  if(aimGuide.visible){
+    const d=me.display,dir=new THREE.Vector3(Math.sin(d.f)*Math.cos(d.pitch||0),Math.sin(d.pitch||0),Math.cos(d.f)*Math.cos(d.pitch||0));
+    const from=new THREE.Vector3(d.x,d.y+1.35,d.z);
+    const to=from.clone().addScaledVector(dir,3.4);
+    const v=aimLine.geometry.attributes.position;v.setXYZ(0,from.x,from.y,from.z);v.setXYZ(1,to.x,to.y,to.z);v.needsUpdate=true;
+    aimDot.position.copy(to);aimDot.scale.setScalar(keys.thrust?1.48:1);
   }
   hazardCircle.material.opacity=latestState?.hazard ? .27 : .035;
   hazardRing.material.opacity=latestState?.hazard ? .95 : .35;
