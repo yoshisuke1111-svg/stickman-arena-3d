@@ -1,0 +1,16 @@
+{
+  "name": "stick-arena-3d",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Original browser 3D stickman arena multiplayer game",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {"node": ">=20"},
+  "dependencies": {
+    "three": "^0.180.0",
+    "ws": "^8.18.3"
+  }
+}
