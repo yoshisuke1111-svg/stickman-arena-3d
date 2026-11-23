@@ -84,3 +84,13 @@ stick-arena-3d/
 - Google Fontsはネットワークから取得します。Three.jsライブラリは `npm install` で取得され、サーバーから同一ドメインで配信されます。
 
 制作者表記：鈾
+
+## このGitHubリポジトリについて
+
+このリポジトリには **PCブラウザ用の6武器オンライン対戦試作版**を登録済みです。
+
+- 画面は `public/index.html` にあります。
+- 対戦サーバー、3D描画、スタイルは `source-parts/` に検証用バックアップとして圧縮格納しています。初回 `npm start` 時に `unpack.mjs` がSHA-256を照合して自動展開するため、ZIPのアップロード操作は不要です。
+- `npm test` では元の9件の対戦ロジックテストを復元して実行します。
+- GitHub Actionsの「Restore and test six-weapon source」が成功すれば、展開後のソースも通常のGitHubファイルとして自動コミットされます。
+- Renderで公開する場合はこのリポジトリの `main` を **Web Service / Node / npm install / npm start** で接続します。これからデプロイする段階で、まだ公開URLは確定していません。
