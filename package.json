@@ -6,9 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/*.test.js",
-    "prestart": "node unpack.mjs",
-    "pretest": "node unpack.mjs"
+    "test": "node --test tests/*.test.js"
   },
   "engines": {
     "node": ">=20"
