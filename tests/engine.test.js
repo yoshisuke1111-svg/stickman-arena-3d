@@ -121,20 +121,19 @@ test('bomb explosion deals area damage, gives credit to owner, and spares bystan
 });
 
 
-test('WASD always follows the fixed camera, not the weapon heading',()=>{
- const {api,room,p1,p2}=setup();api.start(room);p2.x=9;p2.z=9;p2.input={};
- p1.x=0;p1.z=0;p1.facing=0;p1.input={d:true};api.tick(room,1/30);
- const right=[p1.x,p1.z];assert.ok(right[0]<0&&right[1]<0);
- p1.x=0;p1.z=0;p1.facing=Math.PI;p1.input={d:true};api.tick(room,1/30);
- assert.ok(Math.abs(p1.x-right[0])<1e-7);
- assert.ok(Math.abs(p1.z-right[1])<1e-7);
- p1.x=0;p1.z=0;p1.input={a:true};api.tick(room,1/30);
- assert.ok(p1.x>0&&p1.z>0);
- p1.x=0;p1.z=0;p1.input={w:true};api.tick(room,1/30);
- assert.ok(p1.x<0&&p1.z>0);
+test('WASD follows facing: the weapon, torso and camera turn together',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.x=0;p1.z=0;p1.facing=0;p1.input={w:true};p2.x=9;p2.z=9;p2.input={};
+ api.tick(room,1/30);
+ assert.ok(p1.z>.17&&Math.abs(p1.x)<.01);
+ assert.equal(p1.moveFacing,p1.facing);
+ p1.x=0;p1.z=0;p1.facing=Math.PI/2;
+ api.tick(room,1/30);
+ assert.ok(p1.x>.17&&Math.abs(p1.z)<.01);
+ assert.equal(p1.moveFacing,p1.facing);
 });
 
-test('katana launches a luminous dragon projectile and hits at range',()=>{
+test('katana skill emits a dragon-shaped travelling hitbox',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
   p1.weapon='katana';p1.x=0;p1.z=0;p1.y=0;p1.facing=0;p1.invuln=0;p1.input={};
   p2.x=0;p2.z=6;p2.y=0;p2.invuln=0;p2.input={};
@@ -143,17 +142,22 @@ test('katana launches a luminous dragon projectile and hits at range',()=>{
   assert.equal(p1.skillCd,6);
   assert.equal(room.events.find(e=>e.type==='skillcast')?.variant,'dragon');
   for(let i=0;i<18;i++)api.tick(room,1/30);
-  assert.ok(p2.hp<100,'dragon projectile deals damage');
+  assert.ok(p2.hp<100,'dragon projectile deals damage on contact');
 });
-test('hammer skill spins weapon and makes nearby contact',()=>{
- const {api,room,p1,p2}=setup();api.start(room);
- p1.weapon='hammer';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;
- p2.x=0;p2.z=2.8;p2.y=0;p2.hp=100;p2.invuln=0;
- api.skill(room,p1);assert.ok(p1.hammerSpin>1);
- api.tick(room,1/30);assert.ok(p2.hp<100);assert.ok(p2.kvz>0);
- assert.ok(room.events.some(e=>e.type==='skillcast'&&e.variant==='hammerSpin'));
+
+test('hammer skill spins weapon over time and hits targets within reach',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon='hammer';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;
+  p2.x=0;p2.z=2.8;p2.y=0;p2.hp=100;p2.invuln=0;
+  api.skill(room,p1);
+  assert.ok(p1.hammerSpin>1);
+  api.tick(room,1/30);
+  assert.ok(p2.hp<100,'hammer spin contacts nearby enemy');
+  assert.ok(p2.kvz>0,'hammer contact knocks back');
+  assert.ok(room.events.some(e=>e.type==='skillcast'&&e.variant==='hammerSpin'));
 });
-test('axe Skill has random cleave, whirlwind and wave variants',()=>{
+
+test('axe Skill includes bubble tube, thrown axe, shock, and spin',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
   p1.weapon='axe';p1.x=0;p1.z=0;p1.invuln=0;
   p2.x=10;p2.z=10;p2.invuln=0;
@@ -163,10 +167,12 @@ test('axe Skill has random cleave, whirlwind and wave variants',()=>{
     for(const e of room.events)if(e.type==='skillcast')seen.add(e.variant);
     room.events.length=0;
   }
-  assert.ok(seen.size>=2);
-  for(const k of seen)assert.ok(['cleave','whirl','wave'].includes(k));
+  assert.ok(seen.size>=2,'the axe can actually roll more than one ability');
+  for(const k of seen)assert.ok(['bubbleTunnel','axeThrow','shockBurst','whirl'].includes(k));
+  assert.deepEqual([...seen].sort(),['bubbleTunnel','axeThrow','shockBurst','whirl'].sort());
 });
-test('melee fighter automatically strikes when moving into range',()=>{
+
+test('fighter moving into melee range automatically swings without a click',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
   p1.weapon='blade';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;p1.facing=0;p1.input={w:true};
   p2.x=0;p2.z=2;p2.y=0;p2.invuln=0;p2.input={};
@@ -174,7 +180,8 @@ test('melee fighter automatically strikes when moving into range',()=>{
   assert.ok(p2.hp<100);
   assert.ok(room.events.some(e=>e.type==='attack'));
 });
-test('falling fighters stand on elevated blocks instead of sinking into them',()=>{
+
+test('platform top catches falling fighters instead of letting them sink in',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
   p1.x=-4.4;p1.z=-1.6;p1.y=3;p1.vy=-2;p1.grounded=false;p1.input={};
   p2.x=10;p2.z=10;p2.input={};
@@ -182,56 +189,132 @@ test('falling fighters stand on elevated blocks instead of sinking into them',()
   assert.ok(Math.abs(p1.y-2.15)<.02);
   assert.equal(p1.grounded,true);
 });
-test('high knockback stays outside solid cover rather than tunneling through it',()=>{
+
+test('fast knockback cannot tunnel into solid cover',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
   p1.x=-7;p1.z=-1.6;p1.y=0;p1.grounded=true;p1.kvx=28;p1.kvz=0;p1.input={};
   p2.x=10;p2.z=10;p2.input={};
   for(let i=0;i<40;i++)api.tick(room,1/30);
-  assert.ok(p1.x<=-5.75-.43,`x=${p1.x}`);
+  assert.ok(p1.x<=-5.75-.43,`stayed outside the wall, x=${p1.x}`);
 });
 
-test('WASD moves, but legacy mouse thrust cannot accelerate anyone',()=>{
- const {api,room,p1,p2}=setup();api.start(room);
- p1.x=0;p1.z=0;p1.input={attack:true,thrust:true};p2.x=9;p2.z=9;p2.input={};
- for(let i=0;i<16;i++)api.tick(room,1/30);
- assert.ok(Math.hypot(p1.x,p1.z)<.01);
- p1.input={w:true};for(let i=0;i<16;i++)api.tick(room,1/30);
- assert.ok(Math.hypot(p1.x,p1.z)>2.5);
-});
-test('Space jumps only once per key press',()=>{
- const {api,room,p1,p2}=setup();api.start(room);
- p1.x=0;p1.z=0;p1.input={jump:true};p2.x=10;p2.z=10;p2.input={};
- for(let i=0;i<50;i++)api.tick(room,1/30);
- assert.ok(p1.grounded);assert.equal(p1.y,0);
- p1.input={};api.tick(room,1/30);
- p1.input={jump:true};api.tick(room,1/30);
- assert.ok(p1.y>0);
-});
-test('CPU has exactly the same walking speed as the player, without boost',()=>{
- const {api,room,p1,p2}=setup();api.start(room);
- p1.x=0;p1.z=0;p1.input={w:true};p1.facing=0;
- p2.isBot=true;p2.x=8;p2.z=-6;p2.facing=0;
- const before=[p2.x,p2.z];api.tick(room,1/30);
- assert.equal(p2.input.thrust,undefined);
- assert.equal(p2.moveAmount,1,'CPU actually walks');
- const humanSpeed=Math.hypot(p1.x,p1.z)*30;
- const botSpeed=Math.hypot(p2.x-before[0],p2.z-before[1])*30;
- assert.ok(Math.abs(botSpeed-humanSpeed)<.01);
-});
-test('sword skill propels fighter instead of launching a slash',()=>{
- const {api,room,p1}=setup();api.start(room);p1.weapon='blade';
- const count=room.projectiles.length;api.skill(room,p1);
- assert.ok(p1.dashTime>0);assert.equal(room.projectiles.length,count);
- assert.equal(room.events.find(e=>e.type==='skillcast')?.variant,'swordCharge');
-});
-test('sword katana axe and hammer Super each fire five angled slashes',()=>{
- for(const weapon of ['blade','katana','axe','hammer']){
+
+test('holding W makes the human move and clicking alone does not accelerate',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
-  p1.weapon=weapon;p1.facing=0;p1.pitch=.25;p1.x=0;p1.z=0;
-  p2.x=10;p2.z=10;p2.input={};api.superAttack(room,p1);
-  assert.equal(room.projectiles.length,5);
-  assert.ok(new Set(room.projectiles.map(p=>p.dx.toFixed(3))).size>=5);
-  assert.ok(new Set(room.projectiles.map(p=>p.dy.toFixed(3))).size>=2);
-  assert.equal(room.events.find(e=>e.type==='super')?.variant,'fanSlashes');
+  p1.x=0;p1.z=0;p1.input={attack:true,thrust:true};p2.x=9;p2.z=9;p2.input={};
+  for(let i=0;i<16;i++)api.tick(room,1/30);
+  assert.ok(Math.hypot(p1.x,p1.z)<.01,'legacy click thrust is ignored');
+  p1.input={w:true};
+  for(let i=0;i<16;i++)api.tick(room,1/30);
+  assert.ok(Math.hypot(p1.x,p1.z)>2.5,'WASD now drives the fighter');
+});
+test('space jumps once per press and does not auto-bounce while held',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.x=0;p1.z=0;p1.input={jump:true};p2.x=10;p2.z=10;p2.input={};
+  for(let i=0;i<86;i++)api.tick(room,1/30);
+  assert.ok(p1.grounded);assert.equal(p1.y,0);
+  p1.input={};api.tick(room,1/30);
+  p1.input={jump:true};api.tick(room,1/30);
+  assert.ok(p1.y>0,'second press triggers next jump');
+});
+test('CPU and human use identical movement speed without bot-only thrust',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.x=0;p1.z=0;p1.input={w:true};p1.facing=0;
+  p2.isBot=true;p2.x=8;p2.z=-6;p2.facing=0;
+  const before=[p2.x,p2.z];
+  api.tick(room,1/30);
+  assert.equal(p2.moveAmount,1,'CPU should actually walk toward the target');
+  assert.equal(p2.input.thrust,undefined);
+  const humanSpeed=Math.hypot(p1.x,p1.z)*30;
+  const cpuSpeed=Math.hypot(p2.x-before[0],p2.z-before[1])*30;
+  assert.ok(Math.abs(cpuSpeed-humanSpeed)<.01,`CPU ${cpuSpeed} vs human ${humanSpeed}`);
+});
+test('sword skill charges instead of spawning a slash projectile',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon='blade';p1.x=0;p1.z=0;p1.facing=0;p1.input={};p2.input={};
+  const count=room.projectiles.length;api.skill(room,p1);
+  assert.ok(p1.dashTime>0);assert.equal(room.projectiles.length,count);
+  assert.equal(room.events.find(e=>e.type==='skillcast')?.variant,'swordCharge');
+});
+
+test('four supplied weapons launch five angled slashes on Super',()=>{
+  for(const weapon of ['blade','katana','hammer','axe']){
+    const {api,room,p1,p2}=setup();api.start(room);
+    p1.weapon=weapon;p1.facing=0;p1.pitch=.25;p1.x=0;p1.z=0;
+    p2.x=10;p2.z=10;p2.input={};
+    api.superAttack(room,p1);
+    assert.equal(room.projectiles.length,5,`${weapon} uses five 3D slashes`);
+    assert.ok(new Set(room.projectiles.map(p=>p.dx.toFixed(3))).size>=5);
+    assert.ok(new Set(room.projectiles.map(p=>p.dy.toFixed(3))).size>=2);
+    assert.equal(room.events.find(e=>e.type==='super')?.variant,'fanSlashes');
+  }
+});
+
+test('jump is high and cannot double jump before landing',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.x=0;p1.z=0;p1.y=0;p1.input={jump:true};p2.input={};p2.x=10;p2.z=10;
+ let apex=0,count=0;
+ for(let i=0;i<62;i++){
+   api.tick(room,1/30);apex=Math.max(apex,p1.y);
+   if(i===14){p1.input={};api.tick(room,1/30);p1.input={jump:true};}
  }
+ assert.ok(apex>5,`high floaty jump apex=${apex}`);
+ assert.ok(apex<9);
+});
+test('solid boundary blocks movement and knockback even above platforms',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.x=11.2;p1.z=0;p1.facing=Math.PI/2;p1.input={w:true};p1.kvx=60;
+ p2.x=0;p2.z=0;p2.input={};
+ for(let i=0;i<50;i++)api.tick(room,1/30);
+ assert.ok(p1.x<=11.46,`solid outer wall x=${p1.x}`);
+ p1.y=6;p1.x=11.3;p1.kvx=40;api.tick(room,1/30);
+ assert.ok(p1.x<=11.46);
+});
+test('dragon and Super slashes travel slower than before and stop at solid walls',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.weapon='katana';p1.x=10.5;p1.z=0;p1.facing=Math.PI/2;p1.input={};
+ p2.x=0;p2.z=0;p2.input={};api.skill(room,p1);
+ assert.ok(room.projectiles[0].speed<=10);
+ for(let i=0;i<20;i++)api.tick(room,1/30);
+ assert.equal(room.projectiles.length,0,'energy must collide with wall');
+ p1.skillCd=0;p1.superCd=0;api.superAttack(room,p1);
+ assert.ok(room.projectiles.every(b=>b.speed<=10));
+});
+test('axe Skill shuffle bag always includes installed bubbling tube and throw',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.weapon='axe';p1.x=0;p1.z=0;p1.facing=0;p1.pitch=0;p1.input={};
+ p2.x=-8;p2.z=-8;p2.input={};
+ const found=new Set();
+ for(let i=0;i<4;i++){
+  p1.skillCd=0;api.skill(room,p1);
+  const event=room.events.findLast(e=>e.type==='skillcast');found.add(event.variant);
+ }
+ assert.equal(found.size,4);
+ assert.ok(found.has('bubbleTunnel'));
+ assert.ok(found.has('axeThrow'));
+ assert.ok(room.axeTunnels.length>=1);
+ assert.ok(room.projectiles.some(x=>x.kind==='axeThrown'));
+ assert.ok(api.packState(room).tunnels.length>=1);
+});
+test('axe tube delays its shockwave until after forward travel',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.weapon='axe';p1.x=0;p1.z=0;p1.facing=0;p1.invuln=0;
+ p2.x=0;p2.z=2;p2.invuln=0;p2.input={};p1.input={};
+ p1.axeBag=['bubbleTunnel'];api.skill(room,p1);
+ assert.equal(room.axeTunnels.length,1);
+ const before=p2.hp;
+ for(let i=0;i<8;i++)api.tick(room,1/30);
+ assert.equal(p2.hp,before);
+ for(let i=0;i<6;i++)api.tick(room,1/30);
+ assert.ok(room.events.some(e=>e.type==='impact'&&e.kind==='tunnelPulse'));
+});
+test('sword charge accelerates smoothly rather than instantly teleporting',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.weapon='blade';p1.x=0;p1.z=0;p1.facing=0;p1.input={};
+ p2.x=10;p2.z=10;p2.input={};
+ api.skill(room,p1);const step=[];for(let i=0;i<8;i++){
+  const old=p1.z;api.tick(room,1/30);step.push(p1.z-old);
+ }
+ assert.ok(step.every(s=>s<.7));
+ assert.ok(step[7]>step[0],`smooth acceleration ${step}`);
 });
