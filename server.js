@@ -11,8 +11,7 @@ const MAX_PLAYERS = 8;
 const MAX_ROOMS = 300;
 const BOUNDS = 12;
 const STEP = 1 / 30;
-// Shared, constant 3/4 view: movement is camera-relative for humans AND CPU.
-const CAMERA_YAW = -0.62;
+// Body heading is the shared movement and camera basis for humans and CPU.
 const WALK_SPEED = 6.0;
 const JUMP_VELOCITY = 12.8;
 const GRAVITY = 12.4;
@@ -41,7 +40,16 @@ const BOMB_FUSE=1.45, BOMB_RADIUS=3.6;
 // attacks. These are original, approximate mechanics, not extracted game values.
 const SKILL_COOLDOWN={blade:5,hammer:7.5,blaster:5.5,katana:6,axe:4.5,bomb:7};
 const SUPER_COOLDOWN={blade:18,hammer:20,blaster:17,katana:19,axe:19,bomb:18};
-const AXE_SKILLS=['bubbleTunnel','axeThrow','shockBurst','whirl'];
+const AXE_SKILLS=['bubbleTunnel','axeThrow','shockBurst'];
+const SWORD_DASH_DURATION=.90;
+const SHOCK_WINDUP=.44, SHOCK_DURATION=.23;
+// Geometry is the same +Z-aligned blade/head used by the client.
+const WEAPON_SHAPES={
+  blade:{from:.38,to:1.79,radius:.13},
+  katana:{from:.88,to:2.79,radius:.11},
+  axe:{head:1.47,halfWidth:.46,radius:.31},
+  hammer:{head:1.35,halfWidth:.45,radius:.25}
+};
 const rooms = new Map();
 const random = (a,b) => Math.random()*(b-a)+a;
 const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
@@ -70,7 +78,7 @@ function spawnPoint(room,p) {
   }
   p.x=chosen[0]+random(-.45,.45); p.z=chosen[1]+random(-.45,.45); p.y=0;
   p.vy=0; p.kvx=0; p.kvz=0; p.hp=100; p.dead=false; p.respawnIn=0; p.invuln=1.25;
-  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.axeBag=[];p.chargeProgress=0;p.jumpLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
+  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.axeBag=[];p.chargeProgress=0;p.jumpLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0; p.shockDrive=0; p.shockAge=0; p.strikeSide=1; p.motionVX=0; p.motionVY=0; p.motionVZ=0; p.wp=null; resetWeaponPose(p);
 }
 function makePlayer(name,ws,isBot=false) {
   return {
@@ -78,7 +86,8 @@ function makePlayer(name,ws,isBot=false) {
     weapon:'blade', x:0,y:0,z:0,vy:0,kvx:0,kvz:0,driveX:0,driveZ:0, facing:0,pitch:0,aimMotion:0,hp:100,
     input:{}, moveAmount:0, grounded:true, jumpLatch:false, moveFacing:0, dead:false, respawnIn:0, invuln:0,
     attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0, stagger:0, spin:0,hammerSpin:0,hammerPulse:0,
-    hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null,axeBag:[],chargeProgress:0,botMode:0,botJumpTimer:0
+    hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null,axeBag:[],chargeProgress:0,botMode:0,botJumpTimer:0,
+    wp:null,shockDrive:0,shockAge:0,strikeSide:1,motionVX:0,motionVY:0,motionVZ:0
   };
 }
 function createRoom() {
@@ -88,16 +97,18 @@ function createRoom() {
   rooms.set(code,room); return room;
 }
 function packPlayer(p) {
+  const wp=ensureWeaponPose(p);
   return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),bf:+p.facing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
     hp:Math.ceil(p.hp),dead:p.dead,k:p.kills,d:p.deaths,s:p.score,bot:p.isBot,a:+p.swing.toFixed(2),hit:+p.hit.toFixed(2),
-    m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2)};
+    m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2),shock:+p.shockDrive.toFixed(2),
+    wp:{mode:wp.mode,x:+wp.x.toFixed(3),y:+wp.y.toFixed(3),z:+wp.z.toFixed(3),yaw:+wp.yaw.toFixed(4),pitch:+wp.pitch.toFixed(4),roll:+wp.roll.toFixed(4),vx:+wp.vx.toFixed(3),vy:+wp.vy.toFixed(3),vz:+wp.vz.toFixed(3)}};
 }
 function packState(room) {
   return {t:'state',room:room.code,phase:room.phase,host:room.host,time:Math.max(0,Math.ceil(room.timer)),
-    players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',f:+Math.atan2(b.dx,b.dz).toFixed(2),pitch:+Math.asin(clamp(b.dy||0,-1,1)).toFixed(2)})),
+    players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',owner:b.owner,sx:b.sx??b.x,sy:b.sy??b.y,sz:b.sz??b.z,age:+(b.age||0).toFixed(3),travel:+(b.travel||0).toFixed(3),radius:b.radius??.65,f:+Math.atan2(b.dx,b.dz).toFixed(2),pitch:+Math.asin(clamp(b.dy||0,-1,1)).toFixed(2)})),
     bombs:room.bombs.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),fuse:+b.fuse.toFixed(2),color:b.color})),
-    tunnels:room.axeTunnels.map(t=>({id:t.id,owner:t.owner,x:+t.x.toFixed(2),y:+t.y.toFixed(2),z:+t.z.toFixed(2),f:+t.f.toFixed(3),pitch:+t.pitch.toFixed(3),length:+t.length.toFixed(2),age:+t.age.toFixed(2),life:+(t.duration-t.age).toFixed(2)})),
-    pulses:room.axePulses.map(t=>({id:t.id,x:+(t.x+t.dx*Math.min(t.age/.28,1)*2.5).toFixed(2),y:+t.y.toFixed(2),z:+(t.z+t.dz*Math.min(t.age/.28,1)*2.5).toFixed(2),age:+t.age.toFixed(2)})),
+    tunnels:room.axeTunnels.map(t=>({id:t.id,owner:t.owner,x:+t.x.toFixed(2),y:+t.y.toFixed(2),z:+t.z.toFixed(2),f:+t.f.toFixed(3),pitch:+t.pitch.toFixed(3),dx:+t.dx.toFixed(4),dy:+t.dy.toFixed(4),dz:+t.dz.toFixed(4),radius:t.radius,length:+t.length.toFixed(2),age:+t.age.toFixed(2),life:+(t.duration-t.age).toFixed(2)})),
+    pulses:room.axePulses.map(t=>({id:t.id,owner:t.owner,x:+t.x.toFixed(3),y:+t.y.toFixed(3),z:+t.z.toFixed(3),dx:t.dx,dy:t.dy,dz:t.dz,phase:t.phase,age:+t.age.toFixed(3),burstAge:+t.burstAge.toFixed(3),radius:+t.radius.toFixed(3),maxRadius:t.maxRadius})),
     hazard:false, events:room.events.splice(0)};
 }
 function broadcastState(room) { roomMsg(room,packState(room)); }
@@ -131,63 +142,297 @@ function start(room) {
 function die(room,p,killer) {
   if(p.dead) return;
   p.hp=0; p.dead=true; p.respawnIn=2.7; p.deaths++;
-  p.dashTime=0;
+  p.dashTime=0; p.shockDrive=0; p.hammerSpin=0;
   if(killer && killer.id!==p.id){killer.kills++;killer.score+=100;}
   event(room,'ko',{name:p.name,by:killer?.id!==p.id?killer?.name:null,x:p.x,z:p.z});
 }
-function damage(room,target,from,dmg,push=5,origin=from) {
+function damage(room,target,from,dmg,push=5,origin=from,contact=null) {
   if(target.dead || target.invuln>0 || room.phase!=='battle' || (from && from.id===target.id)) return false;
   target.hp-=dmg;target.hit=.38;
   target.stagger=Math.max(target.stagger, Math.min(.9,.16+push*.035));
   target.spin=Math.max(target.spin,Math.min(1.6,push*.064));
   let dx=origin ? target.x-origin.x : target.x;
   let dz=origin ? target.z-origin.z : target.z;
+  if(contact && Math.hypot(contact.vx,contact.vz)>.25){dx=contact.vx;dz=contact.vz;}
   let mag=Math.hypot(dx,dz);
   if(mag<.01){ dx=Math.sin(from?.facing||0); dz=Math.cos(from?.facing||0);mag=1;}
   target.kvx+=dx/mag*push; target.kvz+=dz/mag*push;target.vy=Math.max(target.vy,3.5+push*.08);
-  event(room,'hit',{x:target.x,y:target.y+1.2,z:target.z,color:target.color,dmg});
+  if(contact)target.vy+=clamp(contact.vy*.12,-.4,2.5);
+  target.grounded=false;
+  if(target.wp?.mode==='held'){target.wp.yawVel+=clamp(dx/mag*push*.14,-2.2,2.2);target.wp.pitchVel+=push*.11;}
+  event(room,'hit',{x:contact?.x??target.x,y:contact?.y??target.y+1.2,z:contact?.z??target.z,color:target.color,dmg,weapon:contact?.weapon,force:push});
   if(target.hp<=0) die(room,target,from);
   return true;
 }
 function attack(room,p) {
   if(p.attackCd>0 || p.dead || p.invuln>.85 || room.phase!=='battle') return;
-  const w=WPN[p.weapon]; p.attackCd=w.cd; p.swing=.32;
-  event(room,'attack',{id:p.id,weapon:p.weapon,f:p.facing,pitch:p.pitch,x:p.x,y:p.y+1.5,z:p.z});
+  const pose=ensureWeaponPose(p);
+  if(pose.mode!=='held')return;
+  const w=WPN[p.weapon]; p.attackCd=w.cd; p.swing=.38;
+  event(room,'attack',{id:p.id,weapon:p.weapon,f:p.facing,pitch:p.pitch,x:pose.x,y:pose.y,z:pose.z});
   if(p.weapon==='bomb') {
     if(room.bombs.length>=50)room.bombs.shift();
     const f=p.facing;
     room.bombs.push({id:crypto.randomUUID().slice(0,8),owner:p.id,
-      x:p.x+Math.sin(f)*.8,y:p.y+1.45,z:p.z+Math.cos(f)*.8,
+      x:pose.x,y:pose.y,z:pose.z,
       vx:Math.sin(f)*10,vy:8.4,vz:Math.cos(f)*10, fuse:BOMB_FUSE,color:p.color});
   } else if(p.weapon==='blaster') {
     if(room.projectiles.length>100)room.projectiles.shift();
-    const f=p.facing;
-    room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x:p.x+Math.sin(f)*.9,y:p.y+1.28,z:p.z+Math.cos(f)*.9,
-      dx:Math.sin(f),dz:Math.cos(f),life:1.3,color:p.color});
+    const dir=aimDirection(p.facing,p.pitch);
+    room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x:pose.x+dir.x*.9,y:pose.y+dir.y*.9,z:pose.z+dir.z*.9,
+      dx:dir.x,dy:dir.y,dz:dir.z,life:1.3,color:p.color});
   } else {
-    for(const q of room.players.values()) {
-      if(q.id===p.id || q.dead || Math.abs(p.y-q.y)>2)continue;
-      const d=dist(p,q);
-      if(d>w.range)continue;
-      // A sword aimed toward the sky must not hit an enemy straight ahead.
-      const vertical=Math.atan2(q.y-p.y-.15,Math.max(.05,d));
-      if(Math.abs(vertical-p.pitch)>.68)continue;
-      const a=Math.atan2(q.x-p.x,q.z-p.z);
-      const diff=Math.atan2(Math.sin(a-p.facing),Math.cos(a-p.facing));
-      if(Math.abs(diff)<=w.arc/2 && !isBlocked(p,q)) {
-        const momentum=Math.hypot(p.kvx,p.kvz)+(p.moveAmount?3:0);
-        const impact=1+Math.min(.35,momentum*.027)+(p.y>.6?.08:0);
-        damage(room,q,p,Math.round(w.damage*impact),w.push*(1+Math.min(.35,momentum*.032)));
+    // A command applies torque. Damage only happens later when this same
+    // blade/head crosses an opponent; a button press itself cannot hit.
+    p.strikeSide=-(p.strikeSide||1);
+    pose.yawVel+=p.strikeSide*(p.weapon==='katana'?11.5:p.weapon==='blade'?10:8.8);
+    pose.pitchVel+=2.0;
+  }
+}
+
+const angleDelta=(a,b)=>Math.atan2(Math.sin(a-b),Math.cos(a-b));
+const aimDirection=(yaw,pitch)=>({x:Math.sin(yaw)*Math.cos(pitch),y:Math.sin(pitch),z:Math.cos(yaw)*Math.cos(pitch)});
+const vecAdd=(a,b,t=1)=>({x:a.x+b.x*t,y:a.y+b.y*t,z:a.z+b.z*t});
+const vecSub=(a,b)=>({x:a.x-b.x,y:a.y-b.y,z:a.z-b.z});
+const vecDot=(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z;
+const vecLength=v=>Math.hypot(v.x,v.y,v.z);
+const vecLerp=(a,b,t)=>({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t});
+function weaponGripPoint(p){
+  return {x:p.x+Math.cos(p.facing)*.30+Math.sin(p.facing)*.28,
+    y:p.y+1.13,z:p.z-Math.sin(p.facing)*.30+Math.cos(p.facing)*.28};
+}
+function resetWeaponPose(p){
+  const grip=weaponGripPoint(p);
+  p.wp={...grip,type:p.weapon,mode:'held',yaw:p.facing,pitch:p.pitch-.22,roll:0,
+    vx:0,vy:0,vz:0,yawVel:0,pitchVel:0,travel:0,hitTimes:new Map(),
+    previousVX:0,previousVY:0,previousVZ:0};
+  return p.wp;
+}
+function ensureWeaponPose(p){return !p.wp||p.wp.type!==p.weapon?resetWeaponPose(p):p.wp;}
+function weaponSegment(p,pose=p.wp){
+  const shape=WEAPON_SHAPES[p.weapon];
+  const d=aimDirection(pose.yaw,pose.pitch);
+  if(!shape)return {a:{...pose},b:vecAdd(pose,d,.7),radius:.12};
+  if(shape.head){
+    const c=vecAdd(pose,d,shape.head),cy=Math.cos(pose.yaw),sy=Math.sin(pose.yaw),sp=Math.sin(pose.pitch),cp=Math.cos(pose.pitch),cr=Math.cos(pose.roll),sr=Math.sin(pose.roll);
+    const side={x:cy*cr-sy*sp*sr,y:cp*sr,z:-sy*cr-cy*sp*sr};
+    return {a:vecAdd(c,side,-shape.halfWidth),b:vecAdd(c,side,shape.halfWidth),radius:shape.radius};
+  }
+  return {a:vecAdd(pose,d,shape.from),b:vecAdd(pose,d,shape.to),radius:shape.radius};
+}
+function axeHeadPoint(p){const pose=ensureWeaponPose(p);return vecAdd(pose,aimDirection(pose.yaw,pose.pitch),1.47);}
+// Slab intersection in all three axes. The same solid boxes occlude damage,
+// stop flow volumes, and reflect detached weapons.
+function segmentBoxHit(a,b,box,pad=0){
+  const lo={x:box.x-box.w/2-pad,y:-.12-pad,z:box.z-box.d/2-pad};
+  const hi={x:box.x+box.w/2+pad,y:box.h+pad,z:box.z+box.d/2+pad};
+  if(['x','y','z'].every(axis=>a[axis]>=lo[axis]&&a[axis]<=hi[axis])){
+    let distance=Infinity,normal={x:0,y:1,z:0};
+    for(const axis of ['x','y','z'])for(const side of [-1,1]){
+      const gap=side<0?a[axis]-lo[axis]:hi[axis]-a[axis];
+      if(gap<distance){distance=gap;normal={x:0,y:0,z:0};normal[axis]=side;}
+    }
+    return {t:0,normal};
+  }
+  let enter=0,exit=1,normal={x:0,y:1,z:0};
+  for(const axis of ['x','y','z']){
+    const delta=b[axis]-a[axis];
+    if(Math.abs(delta)<1e-8){if(a[axis]<lo[axis]||a[axis]>hi[axis])return null;continue;}
+    let n=-Math.sign(delta),t0=(lo[axis]-a[axis])/delta,t1=(hi[axis]-a[axis])/delta;
+    if(t0>t1)[t0,t1]=[t1,t0];
+    if(t0>enter){enter=t0;normal={x:0,y:0,z:0};normal[axis]=n;}
+    exit=Math.min(exit,t1);if(enter>exit)return null;
+  }
+  return enter>=0&&enter<=1?{t:enter,normal}:null;
+}
+function solidAlong(a,b,radius=0){
+  let nearest=null;
+  for(const box of BLOCKS){const hit=segmentBoxHit(a,b,box,radius);if(hit&&(!nearest||hit.t<nearest.t))nearest=hit;}
+  const margin=WALL_INNER-radius;
+  for(const axis of ['x','z']){
+    if(Math.abs(b[axis])<=margin)continue;
+    const side=Math.sign(b[axis]),delta=b[axis]-a[axis];
+    const t=Math.abs(delta)>1e-8?clamp((side*margin-a[axis])/delta,0,1):0;
+    const normal={x:0,y:0,z:0};normal[axis]=-side;
+    if(!nearest||t<nearest.t)nearest={t,normal};
+  }
+  if(b.y<radius){
+    const t=a.y>b.y?clamp((a.y-radius)/(a.y-b.y),0,1):0;
+    if(!nearest||t<nearest.t)nearest={t,normal:{x:0,y:1,z:0}};
+  }
+  return nearest;
+}
+function isBlocked(a,b) {
+  const from={x:a.x,y:a.y+.10,z:a.z},to={x:b.x,y:b.y+.10,z:b.z};
+  return BLOCKS.some(box=>segmentBoxHit(from,to,box,.025));
+}
+// Closest pair on finite segments; the defender is a vertical body capsule.
+function segmentClosest(a,b,c,d){
+  const u=vecSub(b,a),v=vecSub(d,c),w=vecSub(a,c);
+  const A=vecDot(u,u),B=vecDot(u,v),C=vecDot(v,v),D=vecDot(u,w),E=vecDot(v,w);
+  const den=A*C-B*B;
+  let s=den>1e-10?clamp((B*E-C*D)/den,0,1):0;
+  let t=C>1e-10?(B*s+E)/C:0;
+  if(t<0){t=0;s=A>1e-10?clamp(-D/A,0,1):0;}
+  else if(t>1){t=1;s=A>1e-10?clamp((B-D)/A,0,1):0;}
+  const first=vecAdd(a,u,s),second=vecAdd(c,v,t);
+  return {distance:vecLength(vecSub(first,second)),first,second,s,t};
+}
+function heldWeaponBlocked(p,oldPose,oldSegment){
+  const pose=p.wp,newSegment=weaponSegment(p,pose);
+  let hit=solidAlong(pose,newSegment.a,newSegment.radius)||solidAlong(pose,newSegment.b,newSegment.radius);
+  hit ||= solidAlong(oldSegment.a,newSegment.a,newSegment.radius)||solidAlong(oldSegment.b,newSegment.b,newSegment.radius);
+  if(!hit)return;
+  pose.yaw=oldPose.yaw;pose.pitch=oldPose.pitch;pose.roll=oldPose.roll;
+  pose.yawVel*=-.22;pose.pitchVel*=-.22;
+  // If the body has moved into the resting blade, let the wrist slide along the
+  // solid face. Do not leave a head sticking through a wall while it is held.
+  let segment=weaponSegment(p,pose);
+  if(solidAlong(pose,segment.a,segment.radius)||solidAlong(pose,segment.b,segment.radius)){
+    const original={yaw:pose.yaw,pitch:pose.pitch};
+    const candidates=[];
+    for(const step of [.24,.48,.76,1.05,1.35,1.65]){
+      candidates.push({yaw:original.yaw+step,pitch:original.pitch},{yaw:original.yaw-step,pitch:original.pitch},{yaw:original.yaw,pitch:Math.min(1.45,original.pitch+step)});
+    }
+    for(const candidate of candidates){
+      pose.yaw=candidate.yaw;pose.pitch=candidate.pitch;segment=weaponSegment(p,pose);
+      if(!solidAlong(pose,segment.a,segment.radius)&&!solidAlong(pose,segment.b,segment.radius))return;
+    }
+    pose.yaw=original.yaw;pose.pitch=original.pitch;
+  }
+}
+function testWeaponContact(room,p,before,after,dt,stepFraction){
+  const pose=p.wp;if(!WEAPON_SHAPES[p.weapon]||p.dead||p.invuln>.85)return;
+  const va=vecSub(after.a,before.a),vb=vecSub(after.b,before.b);
+  const swept=Math.max(vecLength(va),vecLength(vb));
+  const samples=Math.max(1,Math.ceil(swept/.12));
+  for(const q of room.players.values()){
+    if(q.id===p.id||q.dead||q.invuln>0||(pose.hitTimes.get(q.id)||0)>room.elapsed)continue;
+    const center=q.previousPos?vecLerp(q.previousPos,q,stepFraction):{x:q.x,y:q.y,z:q.z};
+    // Body movement contributes relative speed too: walking through a stationary
+    // blade is contact, but resting two unmoving weapons together is not damage.
+    const velocity={x:(va.x+vb.x)/(.00001+2*dt)-(q.motionVX||0),y:(va.y+vb.y)/(.00001+2*dt)-(q.motionVY||0),z:(va.z+vb.z)/(.00001+2*dt)-(q.motionVZ||0)};
+    const speed=vecLength(velocity);if(speed<2.3)continue;
+    for(let j=0;j<=samples;j++){
+      const t=j/samples,a=vecLerp(before.a,after.a,t),b=vecLerp(before.b,after.b,t);
+      const closest=segmentClosest(a,b,{x:center.x,y:center.y+.35,z:center.z},{x:center.x,y:center.y+1.88,z:center.z});
+      if(closest.distance>after.radius+.32)continue;
+      const bodyPoint=closest.second;
+      // No hit through cover even when a fast sweep crosses a corner.
+      if(BLOCKS.some(block=>segmentBoxHit(closest.first,bodyPoint,block,.025)))continue;
+      if(pose.mode==='held'&&BLOCKS.some(block=>segmentBoxHit(pose,closest.first,block,.025)))continue;
+      const active=p.swing>0||p.hammerSpin>0||p.dashTime>0||p.shockDrive>0;
+      const impact=clamp(speed/10,active?.65:.28,1.26);
+      const w=WPN[p.weapon],amount=Math.round(w.damage*impact),push=w.push*clamp(speed/12,.42,1.35);
+      if(damage(room,q,p,amount,push,{x:closest.first.x,y:closest.first.y,z:closest.first.z},{...closest.first,vx:velocity.x,vy:velocity.y,vz:velocity.z,weapon:p.weapon})){
+        pose.hitTimes.set(q.id,room.elapsed+(pose.mode==='held'?Math.max(.42,w.cd*.8):.65));
+        // Contact takes energy out of the weapon instead of playing an unrelated
+        // flash at the attacker's origin. Keep enough momentum to follow through.
+        if(pose.mode==='held'){pose.yawVel*=.60;pose.pitchVel*=.65;}
+        else {pose.vx*=.83;pose.vy*=.83;pose.vz*=.83;}
       }
+      break;
     }
   }
 }
-function isBlocked(a,b) {
-  for(let t=.15;t<1;t+=.16){const x=a.x+(b.x-a.x)*t,z=a.z+(b.z-a.z)*t;
-    if(BLOCKS.some(o=>Math.abs(x-o.x)<o.w/2+.1&&Math.abs(z-o.z)<o.d/2+.1 && a.y<o.h-.3 && b.y<o.h-.3))return true;
+function throwAxe(room,p){
+  const pose=ensureWeaponPose(p);if(p.weapon!=='axe'||pose.mode!=='held')return false;
+  const dir=aimDirection(p.facing,p.pitch);
+  pose.mode='outbound';pose.travel=0;pose.flightAge=0;pose.hitTimes.clear();
+  pose.vx=dir.x*14+(p.motionVX||0)*.35;
+  pose.vy=dir.y*14+(p.motionVY||0)*.15+.8;
+  pose.vz=dir.z*14+(p.motionVZ||0)*.35;
+  pose.yawVel*=.2;pose.pitchVel*=.2;
+  event(room,'weaponRelease',{id:p.id,x:pose.x,y:pose.y,z:pose.z});
+  return true;
+}
+function moveThrownWeapon(room,p,dt){
+  const pose=p.wp,grip=weaponGripPoint(p);pose.flightAge=(pose.flightAge||0)+dt;
+  if(pose.mode==='outbound'&&pose.travel>=7.8){pose.mode='returning';}
+  if(pose.mode==='returning'){
+    const delta=vecSub(grip,pose),distance=Math.max(.001,vecLength(delta));
+    const rv={x:pose.vx-(p.motionVX||0),y:pose.vy-(p.motionVY||0),z:pose.vz-(p.motionVZ||0)};
+    // Bounded attraction preserves velocity. Moving the hand sideways bends the
+    // path and can make the axe miss or orbit; no lifetime teleports it home.
+    let ax=delta.x/distance*27-rv.x*.66,ay=delta.y/distance*27-rv.y*.66,az=delta.z/distance*27-rv.z*.66;
+    const aLength=Math.hypot(ax,ay,az),limit=Math.min(1,34/Math.max(1,aLength));
+    pose.vx+=ax*limit*dt;pose.vy+=ay*limit*dt;pose.vz+=az*limit*dt;
+  }else pose.vy-=1.7*dt;
+  const speed=Math.hypot(pose.vx,pose.vy,pose.vz);
+  if(speed>25){const f=25/speed;pose.vx*=f;pose.vy*=f;pose.vz*=f;}
+  const previous={x:pose.x,y:pose.y,z:pose.z};
+  const next={x:pose.x+pose.vx*dt,y:pose.y+pose.vy*dt,z:pose.z+pose.vz*dt};
+  // Move the same rigid axe by a swept volume; a bounce keeps ownership and
+  // velocity, it does not delete a projectile and conjure a fresh held copy.
+  const oldHead=axeHeadPoint(p),headOffset=vecSub(oldHead,pose);
+  const nextHead=vecAdd(next,headOffset);
+  const hit=solidAlong(previous,next,.20)||solidAlong(oldHead,nextHead,.43);
+  const into=hit?pose.vx*hit.normal.x+pose.vy*hit.normal.y+pose.vz*hit.normal.z:0;
+  if(hit&&!(hit.t===0&&into>=0)){
+    const position=vecLerp(previous,next,Math.max(0,hit.t-.012));
+    pose.x=position.x+hit.normal.x*.02;pose.y=Math.max(.22,position.y+hit.normal.y*.02);pose.z=position.z+hit.normal.z*.02;
+    const dot=pose.vx*hit.normal.x+pose.vy*hit.normal.y+pose.vz*hit.normal.z;
+    if(dot<0){pose.vx-=1.5*dot*hit.normal.x;pose.vy-=1.5*dot*hit.normal.y;pose.vz-=1.5*dot*hit.normal.z;}
+    pose.mode='returning';pose.yawVel*=.6;pose.pitchVel*=.6;
+    event(room,'bounce',{kind:'axe',x:oldHead.x,y:oldHead.y,z:oldHead.z});
+  }else {pose.x=next.x;pose.y=next.y;pose.z=next.z;}
+  pose.travel+=vecLength(vecSub(pose,previous));
+  // The footage rotates the axe slowly with its path; it is not a spinning saw.
+  const yaw=Math.atan2(pose.vx,pose.vz),pitch=Math.atan2(pose.vy,Math.hypot(pose.vx,pose.vz));
+  pose.yawVel+=clamp(angleDelta(yaw,pose.yaw)*5-pose.yawVel*2.8,-8,8)*dt;
+  pose.pitchVel+=clamp(angleDelta(pitch,pose.pitch)*4-pose.pitchVel*2.5,-7,7)*dt;
+  pose.yawVel=clamp(pose.yawVel,-1.9,1.9);pose.pitchVel=clamp(pose.pitchVel,-1.6,1.6);
+  pose.yaw+=pose.yawVel*dt;pose.pitch+=pose.pitchVel*dt;pose.roll+=(clamp(-pose.yawVel*.2,-.35,.35)-pose.roll)*dt*3;
+  if(pose.mode==='returning'){
+    const distance=vecLength(vecSub(grip,pose));
+    const relative=Math.hypot(pose.vx-(p.motionVX||0),pose.vy-(p.motionVY||0),pose.vz-(p.motionVZ||0));
+    if(pose.flightAge>.15&&distance<.66&&relative<18){
+      pose.mode='held';pose.x=grip.x;pose.y=grip.y;pose.z=grip.z;
+      pose.yawVel=clamp(pose.yawVel,-2,2);pose.pitchVel=clamp(pose.pitchVel,-2,2);
+      pose.vx=p.motionVX||0;pose.vy=p.motionVY||0;pose.vz=p.motionVZ||0;
+      event(room,'weaponCatch',{id:p.id,x:grip.x,y:grip.y,z:grip.z});
+      return true;
+    }
   }
   return false;
 }
+function advanceWeapons(room,dt){
+  for(const p of room.players.values()){
+    const pose=ensureWeaponPose(p);if(p.dead)continue;
+    const steps=Math.max(1,Math.ceil(dt/(1/120))),h=dt/steps;
+    const start={x:pose.x,y:pose.y,z:pose.z},grip=weaponGripPoint(p);
+    if(pose.mode==='held'){
+      const dvx=(p.motionVX||0)-pose.previousVX,dvy=(p.motionVY||0)-pose.previousVY,dvz=(p.motionVZ||0)-pose.previousVZ;
+      const side=dvx*Math.cos(p.facing)-dvz*Math.sin(p.facing),front=dvx*Math.sin(p.facing)+dvz*Math.cos(p.facing);
+      pose.yawVel-=clamp(side*.085,-1.8,1.8);pose.pitchVel+=clamp(front*.07-dvy*.075,-1.6,1.6);
+    }
+    pose.previousVX=p.motionVX||0;pose.previousVY=p.motionVY||0;pose.previousVZ=p.motionVZ||0;
+    for(let step=0;step<steps;step++){
+      const oldPose={x:pose.x,y:pose.y,z:pose.z,yaw:pose.yaw,pitch:pose.pitch,roll:pose.roll},before=weaponSegment(p,pose);
+      let caught=false;
+      if(pose.mode==='held'){
+        const next=vecLerp(start,grip,(step+1)/steps);pose.vx=(next.x-pose.x)/h;pose.vy=(next.y-pose.y)/h;pose.vz=(next.z-pose.z)/h;
+        pose.x=next.x;pose.y=next.y;pose.z=next.z;
+        if(WEAPON_SHAPES[p.weapon]){
+          const heavy=p.weapon==='axe'||p.weapon==='hammer';
+          const aiming=p.shockDrive>0||p.dashTime>0||room.axePulses.some(t=>t.owner===p.id&&t.phase==='burst');
+          if(p.hammerSpin>0)pose.yawVel+=(13-pose.yawVel)*h*7;
+          else pose.yawVel+=(angleDelta(p.facing,pose.yaw)*(aiming?46:heavy?14:19)-pose.yawVel*(aiming?6.5:3.4))*h;
+          pose.pitchVel+=((p.pitch+(aiming?.08:.025)-pose.pitch)*(aiming?46:19)-pose.pitchVel*(aiming?6.5:3.2)-4.5*Math.cos(pose.pitch))*h;
+          pose.yawVel=clamp(pose.yawVel,-15,15);pose.pitchVel=clamp(pose.pitchVel,-9,9);
+          pose.yaw+=pose.yawVel*h;pose.pitch=clamp(pose.pitch+pose.pitchVel*h,-1.35,1.4);
+          pose.roll+=(clamp(-pose.yawVel*.035,-.36,.36)-pose.roll)*h*7;
+          heldWeaponBlocked(p,oldPose,before);
+        }else {pose.yaw=p.facing;pose.pitch=p.pitch;pose.roll=0;}
+      }else caught=moveThrownWeapon(room,p,h);
+      if(caught){start.x=grip.x;start.y=grip.y;start.z=grip.z;}
+      const after=weaponSegment(p,pose);
+      if(!caught)testWeaponContact(room,p,before,after,h,(step+1)/steps);
+    }
+    for(const [id,until] of pose.hitTimes)if(until<room.elapsed-2||!room.players.has(id))pose.hitTimes.delete(id);
+  }
+}
+
 function detonate(room,b) {
   event(room,'explode',{x:b.x,y:Math.max(.1,b.y),z:b.z,radius:BOMB_RADIUS,color:'#ffab54'});
   const owner=room.players.get(b.owner);
@@ -226,12 +471,13 @@ function advanceBombs(room,dt) {
 function wave(room,p,kind,offset=0,opts={}) {
   if(room.projectiles.length>=110)room.projectiles.shift();
   const angle=p.facing+offset;
-  const speed=opts.speed??(kind==='dragon'?8.3:kind==='axeThrown'?9:kind==='axeWave'?8.1:8.8);
+  const speed=opts.speed??(kind==='dragon'?8.3:kind==='axeWave'?8.1:8.8);
   room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,kind,
     x:p.x+Math.sin(angle)*1.05,y:p.y+(opts.height??1.35),z:p.z+Math.cos(angle)*1.05,
     dx:Math.sin(angle)*Math.cos(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
     dy:Math.sin(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
     dz:Math.cos(angle)*Math.cos(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
+    sx:p.x+Math.sin(angle)*1.05,sy:p.y+(opts.height??1.35),sz:p.z+Math.cos(angle)*1.05,age:0,travel:0,
     speed,life:opts.life??1.2,
     radius:opts.radius??.95,damage:opts.damage??24,push:opts.push??11,
     pierce:opts.pierce??false,hitIds:new Set(),bounces:opts.bounces??0,color:opts.color||p.color});
@@ -244,81 +490,110 @@ function areaImpact(room,p,radius,amount,push,kind) {
     damage(room,q,p,Math.round(amount*falloff),push*falloff);
   }
 }
-// Axe's blue transparent ribbon/tube from the user's video is placed in the
-// current viewing direction, with animated bubbles and a delayed front pulse.
+// The blue tube is a persistent directional current, including propulsion of
+// its owner. Its position/direction stay fixed after placement.
 function placeAxeTunnel(room,p) {
   if(room.axeTunnels.length>=16)room.axeTunnels.shift();
-  const f=p.facing, pitch=clamp(p.pitch,-.45,.45),dx=Math.sin(f),dz=Math.cos(f);
-  const x=p.x+dx*.7,z=p.z+dz*.7;
-  let length=.8;
-  for(let t=1;t<=10;t+=.25){
-    const px=x+dx*t,pz=z+dz*t;
-    if(Math.abs(px)>WALL_INNER-.2||Math.abs(pz)>WALL_INNER-.2||hitBlock(px,pz,p.y+1.3))break;
-    length=t;
-  }
-  room.axeTunnels.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x,y:p.y+1.45,z,f,pitch,
-    dx,dz,length,age:0,duration:3.4,pulseDone:false,hitIds:new Set()});
+  const f=p.facing,pitch=clamp(p.pitch,-1.1,1.2),dir=aimDirection(f,pitch);
+  const source={x:p.x-dir.x*.65,y:p.y+1.13-dir.y*.65,z:p.z-dir.z*.65};
+  const maxLength=24,target=vecAdd(source,dir,maxLength);
+  const stop=solidAlong(source,target,.10);
+  const length=Math.max(.2,(stop?stop.t:1)*maxLength);
+  room.axeTunnels.push({id:crypto.randomUUID().slice(0,8),owner:p.id,...source,f,pitch,
+    dx:dir.x,dy:dir.y,dz:dir.z,length,radius:1.45,age:0,duration:3.4});
 }
-function shockAt(room,owner,at,rad,damageValue,pushValue,kind){
-  event(room,'impact',{id:owner?.id,kind,weapon:'axe',x:at.x,y:at.y,z:at.z,color:'#88f6ff',radius:rad});
-  for(const q of room.players.values()){
-    if(q.dead||q.id===owner?.id||Math.hypot(q.x-at.x,q.z-at.z)>rad||Math.abs(q.y-at.y)>3.2||isBlocked(at,q))continue;
-    damage(room,q,owner,damageValue,pushValue,at);
+function beginShockBurst(room,p){
+  p.shockDrive=SHOCK_WINDUP;p.shockAge=0;
+  const dir=aimDirection(p.facing,p.pitch),head=axeHeadPoint(p);
+  p.shockDirection={x:Math.sin(p.facing),z:Math.cos(p.facing)};
+  const pose=ensureWeaponPose(p);
+  pose.yawVel+=angleDelta(p.facing,pose.yaw)*4;pose.pitchVel+=(p.pitch-pose.pitch)*4;
+  room.axePulses.push({id:crypto.randomUUID().slice(0,8),owner:p.id,...head,
+    dx:dir.x,dy:dir.y,dz:dir.z,phase:'windup',age:0,burstAge:0,radius:0,maxRadius:2.2,hitIds:new Set()});
+}
+function insideCurrent(t,at){
+  const v={x:at.x-t.x,y:at.y-t.y,z:at.z-t.z};
+  const along=v.x*t.dx+v.y*t.dy+v.z*t.dz;
+  const radial=Math.max(0,vecDot(v,v)-along*along);
+  return along>=-.35&&along<t.length&&radial<t.radius*t.radius;
+}
+function applyCurrent(pose,t,dt,body=false){
+  const vx=body?pose.kvx:pose.vx,vy=pose.vy,vz=body?pose.kvz:pose.vz;
+  const along=vx*t.dx+vy*t.dy+vz*t.dz;
+  const fade=clamp(t.age/.12,0,1)*clamp((t.duration-t.age)/.25,0,1);
+  // Constant acceleration with a soft terminal speed: motion is accumulated,
+  // not a one-off radial explosion. Vertical current can lift against gravity.
+  const amount=Math.max(0,1-along/18)*58*fade*dt;
+  if(body){pose.kvx+=t.dx*amount;pose.kvz+=t.dz*amount;}
+  else {pose.vx+=t.dx*amount;pose.vz+=t.dz*amount;}
+  if(body&&t.dy>.08){
+    // An ascending stream supplies lift against gravity and drag in the vertical
+    // axis as well. Without it a shallow tube looked angled but pushed only along
+    // the floor. The player remains free to leave the volume in any direction.
+    pose.vy*=Math.exp(-5*dt);pose.vy+=GRAVITY*dt*fade;
   }
+  pose.vy+=t.dy*amount;
+  if(body&&t.dy*amount>.025)pose.grounded=false;
 }
 function advanceAxeEffects(room,dt){
   for(let i=room.axeTunnels.length-1;i>=0;i--){
     const t=room.axeTunnels[i];t.age+=dt;
-    const owner=room.players.get(t.owner);
-    if(t.age>.30&&!t.pulseDone){
-      t.pulseDone=true;
-      const distAlong=Math.min(t.length,2.3);
-      shockAt(room,owner,{x:t.x+t.dx*distAlong,y:t.y,z:t.z+t.dz*distAlong},1.85,20,11,'tunnelPulse');
+    if(t.age>=t.duration){room.axeTunnels.splice(i,1);continue;}
+    for(const q of room.players.values()){
+      if(q.dead)continue;
+      const center={x:q.x,y:q.y+1.1,z:q.z};
+      if(insideCurrent(t,center)&&!isBlocked(t,center))applyCurrent(q,t,dt,true);
+      if(q.wp?.mode!=='held'&&q.wp&&insideCurrent(t,q.wp)&&!isBlocked(t,q.wp))applyCurrent(q.wp,t,dt,false);
     }
-    if(t.age>.38&&t.age<2.8){
-      for(const q of room.players.values()){
-        if(q.id===t.owner||q.dead||t.hitIds.has(q.id))continue;
-        const vx=q.x-t.x,vz=q.z-t.z,along=vx*t.dx+vz*t.dz;
-        const side=Math.abs(vx*t.dz-vz*t.dx);
-        if(along>0&&along<t.length&&side<1.15&&Math.abs(q.y+1.1-t.y)<1.9&&!isBlocked({x:t.x,z:t.z,y:t.y},{x:q.x,z:q.z,y:q.y+1})){
-          if(damage(room,q,owner,13,7,{x:t.x-t.dx,z:t.z-t.dz,y:t.y}))t.hitIds.add(q.id);
-        }
-      }
-    }
-    if(t.age>=t.duration)room.axeTunnels.splice(i,1);
   }
   for(let i=room.axePulses.length-1;i>=0;i--){
-    const pulse=room.axePulses[i];pulse.age+=dt;
-    if(!pulse.hit&&pulse.age>=.28){
-      pulse.hit=true;
-      const x=clamp(pulse.x+pulse.dx*2.5,-WALL_INNER+.1,WALL_INNER-.1);
-      const z=clamp(pulse.z+pulse.dz*2.5,-WALL_INNER+.1,WALL_INNER-.1);
-      shockAt(room,room.players.get(pulse.owner),{x,y:pulse.y,z},3.7,31,14,'axeFrontShock');
+    const pulse=room.axePulses[i],owner=room.players.get(pulse.owner);
+    if(!owner||owner.dead||owner.weapon!=='axe'||owner.wp?.mode!=='held'){room.axePulses.splice(i,1);continue;}
+    // Windup follows the body's elapsed drive, including skills issued at the
+    // end of a tick. The shell cannot start one network frame before the motion.
+    pulse.age=pulse.phase==='windup'?owner.shockAge:pulse.age+dt;
+    // There is no separate bullet: the small shell blooms around the actual
+    // axe head after the owner's short forward motion, then travels with it.
+    const center=axeHeadPoint(owner);pulse.x=center.x;pulse.y=center.y;pulse.z=center.z;
+    if(pulse.phase==='windup'&&pulse.age>=SHOCK_WINDUP){
+      pulse.phase='burst';pulse.burstAge=0;pulse.radius=.12;
+      event(room,'shockBloom',{id:pulse.id,owner:owner.id,x:pulse.x,y:pulse.y,z:pulse.z,radius:pulse.maxRadius});
     }
-    if(pulse.age>=.9)room.axePulses.splice(i,1);
+    if(pulse.phase==='burst'){
+      const oldRadius=pulse.radius;
+      pulse.burstAge+=dt;
+      pulse.radius=.12+(pulse.maxRadius-.12)*clamp(pulse.burstAge/SHOCK_DURATION,0,1);
+      for(const q of room.players.values()){
+        if(q.id===owner.id||q.dead||pulse.hitIds.has(q.id))continue;
+        const bodyPoint={x:q.x,y:clamp(pulse.y,q.y+.35,q.y+1.88),z:q.z};
+        const distance=vecLength(vecSub(bodyPoint,pulse));
+        if(distance>pulse.radius+.32||distance<oldRadius-.32||isBlocked(pulse,bodyPoint))continue;
+        if(damage(room,q,owner,31,13,pulse))pulse.hitIds.add(q.id);
+      }
+      if(pulse.burstAge>=SHOCK_DURATION)room.axePulses.splice(i,1);
+    }
   }
 }
+
 function skill(room,p) {
   if(p.skillCd>0||p.dead||room.phase!=='battle')return;
+  const pose=ensureWeaponPose(p);if(p.weapon==='axe'&&pose.mode!=='held')return;
   p.skillCd=SKILL_COOLDOWN[p.weapon];p.swing=.55;
   let variant='';
   switch(p.weapon){
     case 'blade':
-      variant='swordCharge';p.dashTime=.62;p.chargeProgress=0;p.dashHits=new Set();p.vy=Math.max(p.vy,Math.max(0,p.pitch)*3);break;
+      variant='swordCharge';p.dashTime=SWORD_DASH_DURATION;p.chargeProgress=0;p.dashHits=new Set();p.vy=Math.max(p.vy,Math.max(0,p.pitch)*3);break;
     case 'katana':
       variant='dragon';wave(room,p,'dragon',0,{radius:1.05,damage:33,push:11,life:2.5,speed:8.3,pierce:true,color:'#5ae6ff'});break;
     case 'hammer':
-      variant='hammerSpin';p.hammerSpin=1.25;p.hammerPulse=0;break;
+      variant='hammerSpin';p.hammerSpin=1.25;p.hammerPulse=0;pose.yawVel+=7;break;
     case 'axe': {
-      // Shuffle bag gives random order without repeating the same ability four times.
+      // Only the three skills visible in the supplied axe reference are selected.
       if(!p.axeBag?.length){p.axeBag=[...AXE_SKILLS];for(let i=p.axeBag.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[p.axeBag[i],p.axeBag[j]]=[p.axeBag[j],p.axeBag[i]];}}
       variant=p.axeBag.pop();
       if(variant==='bubbleTunnel')placeAxeTunnel(room,p);
-      else if(variant==='axeThrow')wave(room,p,'axeThrown',0,{radius:.7,damage:31,push:10,life:2.7,speed:9,bounces:1,color:'#b6f0ff'});
-      else if(variant==='shockBurst')room.axePulses.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x:p.x,y:p.y+1,z:p.z,dx:Math.sin(p.facing),dz:Math.cos(p.facing),age:0,hit:false});
-      else if(variant==='whirl'){
-        p.hammerSpin=.95;p.hammerPulse=.16;
-      }
+      else if(variant==='axeThrow')throwAxe(room,p);
+      else if(variant==='shockBurst')beginShockBurst(room,p);
       break;
     }
     case 'blaster':
@@ -418,36 +693,36 @@ function tick(room,dt) {
   room.elapsed+=dt;room.timer-=dt;
   if(room.timer<=0){room.timer=0;room.phase='finished'; event(room,'end');broadcastState(room);return;}
   room.hazardActive=false; // Original footage has no artificial periodic arena damage.
+  for(const p of room.players.values()){ensureWeaponPose(p);p.previousPos={x:p.x,y:p.y,z:p.z};}
   for(const p of room.players.values()) {
     p.attackCd=Math.max(0,p.attackCd-dt); p.skillCd=Math.max(0,p.skillCd-dt);p.superCd=Math.max(0,p.superCd-dt);
     p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.stagger=Math.max(0,p.stagger-dt);p.spin=Math.max(0,p.spin-dt*1.9);p.invuln=Math.max(0,p.invuln-dt);p.aimMotion=Math.max(0,p.aimMotion-dt*1.1);
-    if(p.hammerSpin>0){
-      p.hammerSpin=Math.max(0,p.hammerSpin-dt);p.hammerPulse-=dt;
-      if(p.hammerPulse<=0){
-        p.hammerPulse=.27;
-        for(const q of room.players.values())if(q.id!==p.id&&!q.dead&&Math.abs(p.y-q.y)<2.4&&dist(p,q)<2.9&&!isBlocked(p,q))
-          damage(room,q,p,17,10);
-      }
-    }
+    p.hammerSpin=Math.max(0,p.hammerSpin-dt);
     if(p.dead){p.respawnIn-=dt;if(p.respawnIn<=0)spawnPoint(room,p);continue;}
     if(p.isBot) simulateBot(room,p,dt);
     const k=p.input||{};
     let vx=(Number(!!k.d)-Number(!!k.a)),vz=(Number(!!k.w)-Number(!!k.s));
     const length=Math.hypot(vx,vz)||1;vx/=length;vz/=length;
-    // All movement uses the same fixed camera basis, never weapon facing.
+    // Body, camera and intended weapon direction share this movement basis.
     const sin=Math.sin(p.facing),cos=Math.cos(p.facing);
     let dx=-vx*cos+vz*sin,dz=vz*cos+vx*sin;
     p.moveAmount=(!!k.w||!!k.a||!!k.s||!!k.d)?1:0;
     p.moveFacing=p.facing; // weapon, torso and camera share this yaw
     // Clear legacy B-mode momentum so returning players and bots are equal.
     p.driveX=0;p.driveZ=0;
+    let speed=WALK_SPEED;
     if(p.dashTime>0){
-      p.dashTime=Math.max(0,p.dashTime-dt);p.chargeProgress=Math.min(1,p.chargeProgress+dt/.62);dx=Math.sin(p.facing);dz=Math.cos(p.facing);
-      for(const q of room.players.values()) if(q.id!==p.id&&!p.dashHits.has(q.id)&&!q.dead&&dist(p,q)<1.5 && Math.abs(p.y-q.y)<2) {
-        if(damage(room,q,p,22,10))p.dashHits.add(q.id);
-      }
+      p.dashTime=Math.max(0,p.dashTime-dt);
+      p.chargeProgress=Math.min(1,p.chargeProgress+dt/SWORD_DASH_DURATION);
+      dx=Math.sin(p.facing);dz=Math.cos(p.facing);
+      speed=WALK_SPEED+5.8*Math.sin(Math.PI*p.chargeProgress);
     }
-    const speed=p.dashTime>0?WALK_SPEED+9*Math.sin(Math.PI*p.chargeProgress):WALK_SPEED;
+    if(p.shockDrive>0){
+      const progress=clamp((p.shockAge+dt*.5)/SHOCK_WINDUP,0,1);
+      dx=p.shockDirection?.x??Math.sin(p.facing);dz=p.shockDirection?.z??Math.cos(p.facing);
+      speed=14*Math.sin(Math.PI*progress);
+      p.shockAge+=dt;p.shockDrive=Math.max(0,SHOCK_WINDUP-p.shockAge);
+    }
     // Substepping prevents high-speed knockback/dashes from tunnelling into cover.
     const moveX=(dx*speed+p.kvx)*dt,moveZ=(dz*speed+p.kvz)*dt;
     const subdivisions=Math.max(1,Math.ceil(Math.hypot(moveX,moveZ)/.22));
@@ -470,6 +745,7 @@ function tick(room,dt) {
     }
     if(p.y<=floor && oldY>=floor-.18){p.y=floor;p.vy=0;p.grounded=true;}
     else p.grounded=false;
+    p.motionVX=(p.x-p.previousPos.x)/dt;p.motionVY=(p.y-p.previousPos.y)/dt;p.motionVZ=(p.z-p.previousPos.z)/dt;
     if(p.y<-9){die(room,p,null);continue;}
     // Ordinary swing follows movement, as in the supplied footage. Click remains
     // an optional deliberate swing for precise PC combat.
@@ -481,28 +757,22 @@ function tick(room,dt) {
 
     if(p.dashTime===0)p.dashHits.clear();
   }
+  advanceWeapons(room,dt);
   for(let i=room.projectiles.length-1;i>=0;i--){
-    const b=room.projectiles[i];b.life-=dt;
+    const b=room.projectiles[i];b.life-=dt;b.age=(b.age||0)+dt;
     const speed=b.speed??(b.kind==='blaster'?16:8.8),travel=speed*dt;
     const steps=Math.max(1,Math.ceil(travel/.19));
     let remove=b.life<=0;
     for(let step=0;step<steps&&!remove;step++){
       const oldX=b.x,oldZ=b.z,oldY=b.y;
-      b.x+=b.dx*travel/steps;b.y+=(b.dy||0)*travel/steps;b.z+=b.dz*travel/steps;
-      const wallX=Math.abs(b.x)>=WALL_INNER,wallZ=Math.abs(b.z)>=WALL_INNER;
-      const obstacle=hitBlock(b.x,b.z,b.y)||wallX||wallZ;
-      if(obstacle){
-        if(b.kind==='axeThrown'&&b.bounces>0){
-          b.bounces--;
-          if(wallX||(!wallZ&&Math.abs(b.x-oldX)>.002))b.dx*=-1;
-          if(wallZ||(!wallX&&Math.abs(b.z-oldZ)>.002))b.dz*=-1;
-          b.x=clamp(oldX,-WALL_INNER+.02,WALL_INNER-.02);
-          b.z=clamp(oldZ,-WALL_INNER+.02,WALL_INNER-.02);
-          b.speed*=.72;
-          event(room,'bounce',{kind:b.kind,x:b.x,y:b.y,z:b.z});
-        }else{
-          event(room,'projectileBreak',{kind:b.kind,x:oldX,y:oldY,z:oldZ});remove=true;
-        }
+      b.x+=b.dx*travel/steps;b.y+=(b.dy||0)*travel/steps;b.z+=b.dz*travel/steps;b.travel=(b.travel||0)+travel/steps;
+      const collisionRadius=b.kind==='dragon'?.44:b.kind==='slash'?.25:.15;
+      const oldPoint={x:oldX,y:oldY,z:oldZ};
+      const collision=solidAlong(oldPoint,b,collisionRadius);
+      if(collision){
+        const contact=vecLerp(oldPoint,b,collision.t);
+        b.x=contact.x;b.y=contact.y;b.z=contact.z;
+        event(room,'projectileBreak',{kind:b.kind,x:b.x,y:b.y,z:b.z});remove=true;
         break;
       }
       const radius=b.radius??.65;
@@ -510,6 +780,7 @@ function tick(room,dt) {
       for(const q of room.players.values()){
         if(q.id===b.owner||q.dead||b.hitIds?.has(q.id))continue;
         if(Math.hypot(b.x-q.x,b.z-q.z)<radius+.32&&Math.abs(b.y-(q.y+1.2))<1.55){
+          if(isBlocked(b,{x:q.x,y:q.y+1.2,z:q.z}))continue;
           if(damage(room,q,owner,b.damage??17,b.push??5)){
             if(!b.hitIds)b.hitIds=new Set();b.hitIds.add(q.id);
             if(!b.pierce){remove=true;break;}
@@ -539,7 +810,7 @@ const wss=new WebSocketServer({server,path:'/ws',maxPayload:2048});
 wss.on('connection',ws=>{
   ws.isAlive=true;
   ws.on('pong',()=>{ws.isAlive=true;});
-  safeSend(ws,{t:'hello',version:'0.3.0'});
+  safeSend(ws,{t:'hello',version:'0.4.0'});
   ws.on('message',(data)=>{
     let m;
     try {m=JSON.parse(data.toString());} catch {return;}
@@ -563,7 +834,14 @@ wss.on('connection',ws=>{
           p.facing=aimed;
         }
         if(Number.isFinite(m.pitch)){const v=clamp(m.pitch,-1.10,1.20);p.aimMotion=Math.min(1.3,p.aimMotion+Math.abs(v-p.pitch));p.pitch=v;}
-      } else if(m.t==='weapon')p.weapon=safeWeapon(m.weapon);
+      } else if(m.t==='weapon'){
+        const nextWeapon=safeWeapon(m.weapon);
+        if(ensureWeaponPose(p).mode==='held'&&nextWeapon!==p.weapon){
+          p.weapon=nextWeapon;p.shockDrive=0;p.shockAge=0;p.hammerSpin=0;p.hammerPulse=0;p.dashTime=0;p.chargeProgress=0;p.swing=0;p.dashHits.clear();
+          room.axePulses=room.axePulses.filter(effect=>effect.owner!==p.id);
+          resetWeaponPose(p);
+        }
+      }
       else if(m.t==='start'&&room.host===p.id){start(room);}
       else if(m.t==='bot'&&room.host===p.id && room.players.size<MAX_PLAYERS){
         const bot=makePlayer('CPU '+(room.players.size),'',true);bot.weapon=['blade','katana','hammer','axe','blaster','bomb'][(room.players.size-1)%6];
@@ -571,7 +849,7 @@ wss.on('connection',ws=>{
       } else if(m.t==='removeBots'&&room.host===p.id){
         for(const q of room.players.values())if(q.isBot)room.players.delete(q.id);
         broadcastState(room);
-      } else if(m.t==='lobby'&&room.host===p.id){room.phase='lobby';room.projectiles=[];room.bombs=[];broadcastState(room);}
+      } else if(m.t==='lobby'&&room.host===p.id){room.phase='lobby';room.projectiles=[];room.bombs=[];room.axeTunnels=[];room.axePulses=[];for(const q of room.players.values()){q.hammerSpin=0;q.shockDrive=0;resetWeaponPose(q);}broadcastState(room);}
       room.lastActivity=nowMs();
     }
   });
@@ -580,8 +858,8 @@ wss.on('connection',ws=>{
 const tickTimer=setInterval(()=>{
   for(const room of rooms.values()){
     tick(room,STEP);
-    room.snapAt++;
-    if(room.snapAt>=2){room.snapAt=0;broadcastState(room);}
+    // 30 snapshots/s preserve short contact impulses and the 0.23 s shell.
+    broadcastState(room);
     if(nowMs()-room.lastActivity>60*60*1000)rooms.delete(room.code);
   }
 },1000/30);

@@ -1,4 +1,5 @@
 import * as THREE from '/vendor/three.module.js';
+import { disposeVisual, slashGeometry, createFlowTube, updateFlowTube, animateFlowTube, createShockShell, updateShockShell, animateShockShell, setWeaponPose, poseHoldingArm, createRibbon, updateRibbon, createDragon, updateDragonTail } from './combat-visuals.js';
 
 const $ = id => document.getElementById(id);
 const host = $('world');
@@ -175,14 +176,21 @@ function buildFighter(p){
   leftArm.position.set(-.26,1.54,0);rightArm.position.set(.26,1.54,0);
   leftLeg.position.set(-.15,.79,0);rightLeg.position.set(.15,.79,0);
   root.add(leftArm,rightArm,leftLeg,rightLeg);
-  for(const limb of [leftArm,rightArm]){bodyPiece(limb,cyl,colorMat,[0,-.37,0],[.09,.69,.09]);bodyPiece(limb,ballGeo,colorMat,[0,-.71,0],[.11,.11,.11]);}
+  for(const limb of [leftArm]){bodyPiece(limb,cyl,colorMat,[0,-.37,0],[.09,.69,.09]);bodyPiece(limb,ballGeo,colorMat,[0,-.71,0],[.11,.11,.11]);}
   for(const limb of [leftLeg,rightLeg]){bodyPiece(limb,cyl,colorMat,[0,-.37,0],[.1,.75,.1]);bodyPiece(limb,ballGeo,dark,[0,-.76,.12],[.14,.11,.24]);}
-  const weaponGroup=new THREE.Group();weaponGroup.position.set(0,-.73,0);rightArm.add(weaponGroup);
+  rightArm.position.set(0,0,0);
+  const armUpper=bodyPiece(rightArm,cyl,colorMat,[0,0,0],[.09,.5,.09]);
+  const armFore=bodyPiece(rightArm,cyl,colorMat,[0,0,0],[.09,.5,.09]);
+  const elbowJoint=bodyPiece(rightArm,ballGeo,colorMat,[0,0,0],[.10,.10,.10]);
+  const hand=bodyPiece(rightArm,ballGeo,colorMat,[0,0,0],[.11,.11,.11]);
+  const weaponGroup=new THREE.Group();scene.add(weaponGroup);
+  const weaponTrail=createRibbon(18,'#a6f5ff',.30);scene.add(weaponTrail.mesh);
+  const bodyTrail=createRibbon(24,'#6adcf1',.20);scene.add(bodyTrail.mesh);
   const nameSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(document.createElement('canvas')),depthTest:false,transparent:true}));
   nameSprite.position.set(0,2.68,0);nameSprite.scale.set(2.7,.7,1);root.add(nameSprite);
   const ring=new THREE.Mesh(new THREE.RingGeometry(.40,.455,40),new THREE.MeshBasicMaterial({color:p.c||'#49edda',transparent:true,opacity:.28,side:THREE.DoubleSide}));
   ring.rotation.x=-Math.PI/2;ring.position.y=.04;root.add(ring);
-  const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f,pitch:p.pitch||0,hs:p.hs||0,dash:0},bodyYaw:p.f,walkPhase:Math.random()*6.28,trailAt:0};
+  const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,armUpper,armFore,elbowJoint,hand,weaponTrail,bodyTrail,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f,pitch:p.pitch||0,hs:p.hs||0,dash:0},bodyYaw:p.f,walkPhase:Math.random()*6.28,trailAt:0};
   replaceWeapon(model,p.w);labelSprite(model,p);
   return model;
 }
@@ -207,10 +215,15 @@ function replaceWeapon(model,w){
     addPart(group,boxGeo,edge,0,.054,1.67,.025,.022,1.52);
     addPart(group,ballGeo,steel,0,0,2.67,.05,.06,.15);
   } else if(w==='axe'){
-    addPart(group,cyl,black,0,0,.64,.12,1.5,.12).rotation.x=Math.PI/2;
-    addPart(group,boxGeo,steel,0,0,1.47,.92,.15,.72);
-    addPart(group,boxGeo,edge,-.47,0,1.47,.12,.18,.73);
-    addPart(group,boxGeo,steel,.35,0,1.53,.28,.19,.36);
+    addPart(group,cyl,black,0,0,.69,.065,1.62,.065).rotation.x=Math.PI/2;
+    const shape=new THREE.Shape();
+    shape.moveTo(-.10,-.12);shape.quadraticCurveTo(-.34,-.12,-.50,-.38);
+    shape.quadraticCurveTo(-.72,-.02,-.48,.38);shape.quadraticCurveTo(-.31,.17,-.10,.14);
+    shape.lineTo(.10,.14);shape.quadraticCurveTo(.31,.17,.48,.38);
+    shape.quadraticCurveTo(.72,-.02,.50,-.38);shape.quadraticCurveTo(.34,-.12,.10,-.12);shape.closePath();
+    const head=new THREE.Mesh(new THREE.ExtrudeGeometry(shape,{depth:.12,bevelEnabled:true,bevelSize:.025,bevelThickness:.02,bevelSegments:1,steps:1}),steel);
+    head.rotation.x=Math.PI/2;head.position.set(0,.06,1.47);head.castShadow=true;group.add(head);
+    addPart(group,cyl,mat('#b9a273',.25,.5),0,0,1.47,.11,.19,.11).rotation.x=Math.PI/2;
   } else if(w==='bomb'){
     addPart(group,ballGeo,black,0,0,.44,.27,.27,.27);
     addPart(group,boxGeo,edge,0,.27,.44,.08,.23,.09);
@@ -240,27 +253,21 @@ function labelSprite(m,p){
   if(m.nameSprite.material.map)m.nameSprite.material.map.dispose();
   m.nameSprite.material.map=texture;m.nameSprite.material.needsUpdate=true;
 }
-function destroyModel(m){scene.remove(m.root);m.nameSprite.material.map?.dispose();m.nameSprite.material.dispose();}
+function destroyModel(m){
+  scene.remove(m.root);scene.remove(m.weaponGroup);
+  m.nameSprite.material.map?.dispose();m.nameSprite.material.dispose();
+  disposeVisual(m.weaponTrail.mesh);disposeVisual(m.bodyTrail.mesh);
+  // Body geometry is shared between fighters, so do not dispose it here.
+  const materials=new Set();m.root.traverse(o=>{if(o.material&&o!==m.nameSprite)materials.add(o.material);});
+  for(const material of materials)material.dispose();
+  m.weaponGroup.traverse(o=>{if(o.geometry&&![boxGeo,cyl,ballGeo].includes(o.geometry))o.geometry.dispose();});
+}
 const playerModels=new Map();
 // A thick swept crescent rather than a wireframe torus: inspired by the
 // broad, bright blade strokes visible in the reference videos.
-function crescentGeometry(radius=1.0,angleWidth=Math.PI*1.25){
-  const points=28,verts=[],alpha1=-(Math.PI+angleWidth)/2,alpha2=(angleWidth-Math.PI)/2;
-  const outer=radius*1.12,inner=radius*.66;
-  for(let i=0;i<points-1;i++){
-    const a=alpha1+(alpha2-alpha1)*i/(points-1);
-    const b=alpha1+(alpha2-alpha1)*(i+1)/(points-1);
-    const outerA=[Math.cos(a)*outer,Math.sin(a)*outer,0];
-    const outerB=[Math.cos(b)*outer,Math.sin(b)*outer,0];
-    const innerA=[Math.cos(a)*inner,Math.sin(a)*inner,.035];
-    const innerB=[Math.cos(b)*inner,Math.sin(b)*inner,.035];
-    verts.push(...outerA,...innerA,...outerB,...innerA,...innerB,...outerB);
-  }
-  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
-  g.computeVertexNormals();return g;
-}
+function crescentGeometry(radius=1.0,angleWidth=Math.PI*1.25){return slashGeometry(radius,angleWidth);}
 function crescentMesh(color,size=1,opacity=.82){
-  return new THREE.Mesh(crescentGeometry(size),new THREE.MeshBasicMaterial({color,transparent:true,opacity,side:THREE.DoubleSide,depthWrite:false,fog:false}));
+  return new THREE.Mesh(crescentGeometry(size),new THREE.MeshBasicMaterial({color,transparent:true,opacity,vertexColors:true,side:THREE.DoubleSide,depthWrite:false,fog:false}));
 }
 const bullets=new Map();
 const thrownBombs=new Map();
@@ -291,54 +298,28 @@ function syncWorld(players,shots,bombStates=[],tunnels=[],pulses=[]){
     bulletIds.add(p.id);
     let b=bullets.get(p.id);
     if(!b){
-      const group=new THREE.Group(), color=p.kind==='dragon'?'#59f5ff':p.kind==='axeThrown'?'#d4fcff':p.kind==='axeWave'?'#4bf3db':p.kind==='slash'?'#b7ffff':p.color;
-      const glowMaterial=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.87,side:THREE.DoubleSide,depthWrite:false});
+      const color=p.kind==='dragon'?'#39e7ff':p.kind==='axeWave'?'#4bf3db':p.kind==='slash'?'#b7ffff':p.color;
+      let group,tail=null;
       if(p.kind==='dragon'){
-        // Stylised cyan dragon-shaped energy ribbon, built from a curved spine,
-        // a distinct head, two horns and trailing luminous fins.
-        const points=[];
-        for(let i=0;i<=12;i++){const t=i/12;points.push(new THREE.Vector3(Math.sin(t*12)*(.2+t*.26),Math.cos(t*10)*.22,1.0-t*3.4));}
-        const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),28,.12,6,false),glowMaterial);
-        group.add(tube);
-        const head=new THREE.Mesh(new THREE.ConeGeometry(.38,.75,7),glowMaterial);head.rotation.x=Math.PI/2;head.position.z=1.34;group.add(head);
-        for(const sign of [-1,1]){
-          const horn=new THREE.Mesh(new THREE.ConeGeometry(.095,.55,5),glowMaterial);
-          horn.rotation.z=sign*.62;horn.position.set(sign*.26,.33,1.17);group.add(horn);
-        }
-      }else if(p.kind==='axeThrown'){
-        // Real spinning axe projectile, not a static half-moon shot.
-        const spinning=new THREE.Group();spinning.position.z=.3;group.add(spinning);
-        const handle=new THREE.Mesh(new THREE.CylinderGeometry(.075,.082,1.3,7),mat('#4c314a'));
-        handle.rotation.x=Math.PI/2;spinning.add(handle);
-        const head=new THREE.Mesh(new THREE.BoxGeometry(.85,.23,.37),mat('#e8ecf2',.3,.43));
-        head.position.z=.46;spinning.add(head);
-        const edge=new THREE.Mesh(new THREE.BoxGeometry(.08,.27,.42),new THREE.MeshBasicMaterial({color:'#8beeff'}));
-        edge.position.set(-.41,0,.46);spinning.add(edge);
-        group.userData.spinning=spinning;
-      }else if(p.kind==='slash'||p.kind==='axeWave'){
-        const stroke=crescentMesh(color,p.kind==='axeWave'?1.26:1.02,.91);
-        stroke.rotation.z=-.5;group.add(stroke);
-        const rim=new THREE.Mesh(new THREE.TorusGeometry(p.kind==='axeWave'?1.28:1.05,.035,6,35,Math.PI*1.23),
-          new THREE.MeshBasicMaterial({color:'#fff7d9',transparent:true,opacity:.7,side:THREE.DoubleSide}));
-        rim.rotation.z=-.5;group.add(rim);
+        const dragon=createDragon();group=dragon.group;tail=dragon.tail;
       }else{
-        const core=new THREE.Mesh(new THREE.SphereGeometry(.2,12,8),new THREE.MeshBasicMaterial({color:p.color}));
-        group.add(core);
+        group=new THREE.Group();
+        if(p.kind==='slash'||p.kind==='axeWave'){
+          const stroke=crescentMesh(color,p.kind==='axeWave'?1.26:1.02,.88);
+          stroke.rotation.z=-Math.PI/2;group.add(stroke);
+        }else{
+          const core=new THREE.Mesh(new THREE.SphereGeometry(.16,12,8),new THREE.MeshBasicMaterial({color}));group.add(core);
+        }
       }
-      const light=new THREE.PointLight(color,3.1,5);group.add(light);
-      group.position.set(p.x,p.y,p.z);scene.add(group);b={group,kind:p.kind,target:new THREE.Vector3(p.x,p.y,p.z)};bullets.set(p.id,b);
+      group.rotation.order='YXZ';group.position.set(p.x,p.y,p.z);scene.add(group);
+      b={group,tail,kind:p.kind,target:new THREE.Vector3(p.x,p.y,p.z),state:p};bullets.set(p.id,b);
     }
-    b.target.set(p.x,p.y,p.z);
-    // Smooth snapshots at 20 Hz; avoid projectile teleports and flicker.
-    b.group.rotation.y=p.f;
-    b.group.rotation.x=-(p.pitch||0);
-    b.group.rotation.z=p.kind==='dragon'?Math.sin(elapsed*7)*.075:0;
-    if(p.kind==='dragon')b.group.scale.setScalar(1+Math.sin(elapsed*8)*.035);
+    b.target.set(p.x,p.y,p.z);b.state=p;
+    b.group.rotation.set(-(p.pitch||0),p.f,0,'YXZ');
+    if(b.tail)updateDragonTail(b,p);
   }
   for(const [id,b] of bullets)if(!bulletIds.has(id)){
-    scene.remove(b.group);
-    b.group.traverse(o=>{if(o.isMesh){o.geometry.dispose();o.material.dispose();}});
-    bullets.delete(id);
+    disposeVisual(b.group);bullets.delete(id);
   }
   const bombIds=new Set();
   for(const p of bombStates){
@@ -361,83 +342,34 @@ function syncWorld(players,shots,bombStates=[],tunnels=[],pulses=[]){
     scene.remove(b.group);b.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();obj.material.dispose();}});thrownBombs.delete(id);
   }
 }
-function removeVisual(g){scene.remove(g);g.traverse(o=>{if(o.isMesh){o.geometry.dispose();o.material.dispose();}});}
 function syncAxeWorld(tunnels,pulses){
   const ids=new Set();
   for(const t of tunnels){
-    ids.add(t.id);let visual=axeTunnels.get(t.id);
-    if(!visual){
-      const group=new THREE.Group();scene.add(group);
-      const glass=new THREE.Mesh(new THREE.CylinderGeometry(1.10,1.10,t.length,20,1,true),
-        new THREE.MeshBasicMaterial({color:'#61c9ff',transparent:true,opacity:.25,side:THREE.DoubleSide,depthWrite:false}));
-      glass.rotation.x=Math.PI/2;group.add(glass);
-      const lining=new THREE.Mesh(new THREE.CylinderGeometry(.9,.9,t.length,16,1,true),
-        new THREE.MeshBasicMaterial({color:'#a3f9ff',transparent:true,opacity:.095,side:THREE.DoubleSide,depthWrite:false}));
-      lining.rotation.x=Math.PI/2;group.add(lining);
-      const rimMat=new THREE.MeshBasicMaterial({color:'#aafaff',transparent:true,opacity:.70,side:THREE.DoubleSide});
-      for(const z of [-t.length/2,t.length/2]){
-        const rim=new THREE.Mesh(new THREE.TorusGeometry(1.10,.035,6,32),rimMat.clone());rim.position.z=z;group.add(rim);
-      }
-      const streams=[];
-      for(let i=0;i<4;i++){
-        const bar=new THREE.Mesh(new THREE.CylinderGeometry(.025,.025,t.length,6),
-          new THREE.MeshBasicMaterial({color:'#8beaff',transparent:true,opacity:.17,depthWrite:false}));
-        bar.rotation.x=Math.PI/2;bar.position.set(Math.cos(i*Math.PI/2)*.73,Math.sin(i*Math.PI/2)*.73,0);group.add(bar);streams.push(bar);
-      }
-      const bubbles=[];
-      for(let i=0;i<24;i++){
-        const rad=.09+(i%5)*.028;
-        const bubble=new THREE.Mesh(new THREE.SphereGeometry(rad,9,7),
-          new THREE.MeshBasicMaterial({color:i%6===0?'#ffffff':'#d3fbff',transparent:true,opacity:.6+(i%3)*.1,depthWrite:false}));
-        group.add(bubble);bubbles.push(bubble);
-      }
-      visual={group,bubbles,streams,age:0,length:t.length};axeTunnels.set(t.id,visual);
-    }
-    visual.age=t.age;
-    visual.group.position.set(t.x+Math.sin(t.f)*t.length/2,t.y,t.z+Math.cos(t.f)*t.length/2);
-    visual.group.rotation.y=t.f;
-    visual.group.rotation.x=-t.pitch;
-    const alpha=Math.min(1,t.life/.6);
-    for(const obj of visual.group.children)if(obj.material?.opacity!==undefined){
-      const material=obj.material;material.userData.baseOpacity??=material.opacity;
-      material.opacity=material.userData.baseOpacity*alpha;
-    }
+    ids.add(t.id);let v=axeTunnels.get(t.id);
+    if(!v){v=createFlowTube(t);scene.add(v.group);axeTunnels.set(t.id,v);}
+    else updateFlowTube(v,t);
   }
-  for(const [id,v] of axeTunnels)if(!ids.has(id)){removeVisual(v.group);axeTunnels.delete(id);}
+  for(const [id,v] of axeTunnels)if(!ids.has(id)){disposeVisual(v.group);axeTunnels.delete(id);}
   const pulseIds=new Set();
   for(const p of pulses){
     pulseIds.add(p.id);let v=axePulses.get(p.id);
-    if(!v){
-      const group=new THREE.Group(),shell=new THREE.Mesh(new THREE.IcosahedronGeometry(.29,1),
-        new THREE.MeshBasicMaterial({color:'#a3faff',transparent:true,opacity:.84,depthWrite:false}));
-      group.add(shell);scene.add(group);v={group,target:new THREE.Vector3()};axePulses.set(p.id,v);
-      group.position.set(p.x,p.y,p.z);
-    }
-    v.target.set(p.x,p.y,p.z);
+    if(!v){v=createShockShell(p);scene.add(v.group);axePulses.set(p.id,v);}
+    else updateShockShell(v,p);
   }
-  for(const [id,v] of axePulses)if(!pulseIds.has(id)){removeVisual(v.group);axePulses.delete(id);}
+  for(const [id,v] of axePulses)if(!pulseIds.has(id)){disposeVisual(v.group);axePulses.delete(id);}
 }
 function animateAxeWorld(dt){
-  for(const v of axeTunnels.values()){
-    for(const [i,b] of v.bubbles.entries()){
-      const a=i*2.399963;
-      const r=.25+(i%6)*.12;
-      b.position.set(Math.cos(a)*r,Math.sin(a)*r,((i*.77+elapsed*(.95+i%3*.2))%v.length)-v.length/2);
-      b.scale.setScalar(.9+.25*Math.sin(elapsed*6+i));
-    }
-  }
-  for(const b of bullets.values()){
-    b.group.position.lerp(b.target,Math.min(1,dt*17));
-    if(b.group.userData.spinning)b.group.userData.spinning.rotation.z+=dt*12;
-  }
-  for(const p of axePulses.values())p.group.position.lerp(p.target,Math.min(1,dt*15));
+  const now=performance.now();
+  for(const v of axeTunnels.values())animateFlowTube(v,now);
+  for(const b of bullets.values())b.group.position.lerp(b.target,1-Math.exp(-dt*30));
+  for(const v of axePulses.values())animateShockShell(v,now,playerModels.get(v.state.owner)?.weaponHead);
 }
 function burst(type,x,y,z,color){
   const group=new THREE.Group();group.position.set(x,y,z);scene.add(group);
-  const count=type==='explode'?44:type==='super'?25:type==='ko'?28:12;
+  const count=type==='explode'?44:type==='super'?25:type==='ko'?28:7;
   const bits=[];
   for(let i=0;i<count;i++){
-    const mesh=new THREE.Mesh(new THREE.OctahedronGeometry(type==='super'?.10:.075),new THREE.MeshBasicMaterial({color:type==='hit'?(i%4===0?'#fff7d4':i%4===1?'#f7ae75':color):(i%4===0?'#ffffff':color),transparent:true,opacity:1,depthWrite:false}));
+    const mesh=new THREE.Mesh(new THREE.OctahedronGeometry(type==='super'?.10:.075),new THREE.MeshBasicMaterial({color:type==='hit'?'#f0feff':(i%4===0?'#ffffff':color),transparent:true,opacity:1,depthWrite:false}));
     group.add(mesh);
     let a=i*2.3999, h=Math.cos(a*.8);
     bits.push({mesh,v:new THREE.Vector3(Math.cos(a)*(type==='explode'?10:type==='super'?7:3),h*(type==='explode'?6:type==='super'?4:3),Math.sin(a)*(type==='explode'?10:type==='super'?7:3))});
@@ -457,46 +389,15 @@ function animateEffects(dt){
     if(e.t>=e.max){scene.remove(e.group);e.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();obj.material.dispose();}});effects.splice(i,1);}
   }
 }
-// Lightweight visible arcs, shock rings and swirls for weapon-specific abilities.
+// Skill geometry and ordinary strikes are rendered from their live positions.
+// Only the Super has a release flash; ordinary swings do not spawn fake crescents.
 function castEffect(e){
-  const model=playerModels.get(e.id);
-  const x=Number.isFinite(e.x)?e.x:model?.display.x||0;
-  const y=Number.isFinite(e.y)?e.y:(model?.display.y??0)+1.25;
-  const z=Number.isFinite(e.z)?e.z:model?.display.z||0;
-  const kind=e.variant||e.kind||e.weapon||'blade';
-  const color=kind==='dragon'?'#89ebff':kind==='hammerSpin'?'#fff0cb':'#b9f7ff';
-  const group=new THREE.Group();group.position.set(x,y,z);group.rotation.y=e.f??model?.display.f??0;
-  scene.add(group);
-  const meshes=[];
-  const addStroke=(size,angle,zOffset=.85)=>{
-    const m=crescentMesh(color,size,.83);m.rotation.z=angle;m.position.z=zOffset;
-    group.add(m);meshes.push(m);return m;
-  };
-  const isHammerSpin=kind==='hammerSpin';
-  const isCharge=kind==='swordCharge';
-  if(kind==='fanSlashes'){
-    const main=addStroke(1.65,-.35,1.1);main.material.opacity=.94;
-    addStroke(1.15,.14,1.12);
-  }else if(isHammerSpin){
-    for(let i=0;i<3;i++){
-      const stroke=addStroke(.8+i*.24,i*2.1,.7);
-      stroke.rotation.x=i*.36;
-    }
-  }else if(isCharge){
-    // A charge creates a trail throughout movement; it must not pop ahead instantly.
-    addStroke(.45,-.2,.13);
-  }else if(kind==='bubbleTunnel'||kind==='axeThrow'){
-    addStroke(.40,-.6,.25);
-  }else if(kind==='shockBurst'||kind==='axeFrontShock'||kind==='tunnelPulse'){
-    const m=addStroke(kind==='axeFrontShock'?2.15:.70,-.2,.4);m.rotation.x=-.22;
-  }else if(kind==='axe' || kind==='hammer' || kind==='blade'||kind==='katana'){
-    const m=addStroke(kind==='hammer'?1.8:1.34,kind==='axe'?-.75:.5,.82);m.rotation.x=-.08;
-  }else if(kind==='dragon'){
-    addStroke(1.05,-.6,1.2);
-  }else{
-    addStroke(1.22,-.4,1);
-  }
-  effects.push({group,bits:[],ring:null,extra:meshes,t:0,max:isHammerSpin?.65:.32,heavy:isHammerSpin});
+  const kind=e.variant||e.kind;
+  if(kind!=='fanSlashes')return;
+  const m=playerModels.get(e.id);
+  if(!m)return;
+  const at=m.weaponHead||new THREE.Vector3(e.x,e.y,e.z);
+  burst('hit',at.x,at.y,at.z,'#c2fdff');
 }
 const previewGroup=new THREE.Group();scene.add(previewGroup);
 function makePreview(){
@@ -543,6 +444,10 @@ function connect(){
       latestState=m;phase=m.phase;isHost=m.host===selfId;
       const me=m.players.find(p=>p.id===selfId);
       if(me && previousHp>me.hp && me.hp>0){$('flash').classList.add('on');setTimeout(()=>$('flash').classList.remove('on'),100);}
+      if(me&&(!lastPlayers.some(p=>p.id===me.id)||lastPlayers.find(p=>p.id===me.id)?.dead&&!me.dead)){
+        aimYaw=me.f;aimPitch=me.pitch||0;
+      }
+      lastPlayers=m.players;
       previousHp=me?.hp??100;
       syncWorld(m.players,m.shots,m.bombs||[],m.tunnels||[],m.pulses||[]);
       syncAxeWorld(m.tunnels||[],m.pulses||[]);
@@ -550,7 +455,7 @@ function connect(){
       updateScreen();updateStats(m,me);
     } else if(m.t==='error'){
       toast(m.message);$('entryError').textContent=m.message;$('entryError').classList.remove('hidden');
-      if(joined){joined=false;selfId=null;roomCode='';latestState=null;phase='home';syncWorld([],[],[]);history.replaceState(null,'',location.pathname);updateScreen();}
+      if(joined){joined=false;selfId=null;roomCode='';latestState=null;phase='home';syncWorld([],[],[]);syncAxeWorld([],[]);history.replaceState(null,'',location.pathname);updateScreen();}
     }
   };
   socket.onclose=()=>{
@@ -612,13 +517,12 @@ function handleEvents(events){
   for(const e of events){
     if(e.type==='hit'){burst('hit',e.x,e.y,e.z,e.color);playSound(380,.10,'triangle');}
     else if(e.type==='attack'){
-      if(['blade','katana','axe','hammer'].includes(e.weapon))castEffect({...e,variant:e.weapon});
       playSound(e.weapon==='hammer'?180:360,.12,'triangle');
     }
     else if(e.type==='skillcast'){castEffect(e);playSound(e.weapon==='katana'?760:265,.22,'sawtooth');}
-    else if(e.type==='impact'){castEffect(e);burst('super',e.x,e.y,e.z,e.color);}
+    else if(e.type==='impact'){if(!['axeFrontShock','tunnelPulse','hammerSpin'].includes(e.kind))burst('hit',e.x,e.y,e.z,'#d4fbff');}
     else if(e.type==='projectileBreak'||e.type==='bounce'){burst('hit',e.x,e.y,e.z,'#a4eaff');}
-    else if(e.type==='super'){castEffect(e);burst('super',e.x,e.y,e.z,e.color);playSound(140,.36,'sawtooth');}
+    else if(e.type==='super'){castEffect(e);playSound(140,.36,'sawtooth');}
     else if(e.type==='explode'){burst('explode',e.x,e.y,e.z,e.color||'#ffba66');playSound(95,.45,'sawtooth');}
     else if(e.type==='ko'){burst('ko',e.x,1.2,e.z,'#ff789b');addFeed(e.by?`${e.by} ⚔ ${e.name}`:`${e.name} が落下した`);playSound(110,.28,'triangle');}
     else if(e.type==='join'&&joined&&phase==='lobby'){toast(e.name+' が参加');}
@@ -727,7 +631,6 @@ setInterval(()=>{
 
 function animate(dt){
   elapsed+=dt;
-  animateAxeWorld(dt);
   for(const f of fireflies){
     f.t+=dt;
     f.mesh.position.y+=Math.sin(elapsed*1.2+f.seed)*.004;
@@ -738,10 +641,12 @@ function animate(dt){
   if(meModel&&phase==='battle'){
     const p=meModel.display;
     const f=new THREE.Vector3(p.x,p.y+1.2,p.z);
-    const orbitRadius=camDistance*Math.cos(FOLLOW_CAM_PITCH);
+    const orbitPitch=THREE.MathUtils.clamp(FOLLOW_CAM_PITCH-aimPitch*.42,.30,.96);
+    const orbitRadius=camDistance*Math.cos(orbitPitch);
     const viewYaw=aimYaw;
-    const toCam=new THREE.Vector3(p.x-Math.sin(viewYaw)*orbitRadius,p.y+2.3+Math.sin(FOLLOW_CAM_PITCH)*camDistance,p.z-Math.cos(viewYaw)*orbitRadius);
-    targetCamera.lerp(toCam,Math.min(1,dt*6));targetLook.lerp(f,Math.min(1,dt*8));
+    const toCam=new THREE.Vector3(p.x-Math.sin(viewYaw)*orbitRadius,p.y+2.3+Math.sin(orbitPitch)*camDistance,p.z-Math.cos(viewYaw)*orbitRadius);
+    targetLook.lerp(f,1-Math.exp(-dt*15));
+    targetCamera.set(targetLook.x-Math.sin(viewYaw)*orbitRadius,targetLook.y+1.1+Math.sin(orbitPitch)*camDistance,targetLook.z-Math.cos(viewYaw)*orbitRadius);
   }else{
     targetCamera.lerp(new THREE.Vector3(15,15,-19),Math.min(1,dt*1.7));
     targetLook.lerp(new THREE.Vector3(0,1,0),Math.min(1,dt*2));
@@ -767,28 +672,31 @@ function animate(dt){
     m.leftLeg.rotation.x=swingWalk+hitLean*.52+(air?-.28:0);m.rightLeg.rotation.x=-swingWalk-hitLean*.38+(air?.34:0);
     m.leftLeg.rotation.z=-flail*.28;m.rightLeg.rotation.z=flail*.28;
     m.leftArm.rotation.x=-swingWalk*.65-.14+hitLean*.65+Math.sin(elapsed*5+Number(p.id))*.06;
-    const strike=p.a>0?Math.sin((.78-p.a)*10)*1.10:0;
-    // Unlike the camera, the arm and weapon are driven by real aim yaw/pitch.
-    m.rightArm.rotation.x=-.28-(d.pitch||0)*.9-strike*.72-flail*.55+(d.hs>0?Math.sin(elapsed*21)*1.4:0);
-    m.rightArm.rotation.z=(d.hs>0?Math.cos(elapsed*21)*1.30:0)+Math.sin(elapsed*11+Number(p.id))*Math.min(1.0,p.a*.82)+hitLean*.42;
+    m.rightArm.rotation.set(0,0,0);
     m.root.rotation.z=p.dead?Math.min(1.15,m.root.rotation.z+dt*5):THREE.MathUtils.lerp(m.root.rotation.z,hitLean*.46+flail*.20,dt*11);
     if(p.dead)m.root.position.y-=.15;
-    if(p.dash>.01&&elapsed-m.trailAt>.075){
-      m.trailAt=elapsed;
-      const group=new THREE.Group();group.position.set(d.x,d.y+.9,d.z);group.rotation.y=d.f;scene.add(group);
-      const streak=new THREE.Mesh(new THREE.BoxGeometry(.15,.16,1.25),
-        new THREE.MeshBasicMaterial({color:'#7de9f8',transparent:true,opacity:.42,depthWrite:false}));
-      streak.position.z=-.8;group.add(streak);
-      effects.push({group,bits:[],ring:null,extra:[streak],t:0,max:.31,heavy:false});
-    }
     if(air)m.root.position.y+=Math.sin(elapsed*8+Number(p.id))*.025;
     const tilt=p.dash>0?-.22:(hitLean*.31+flail*.43);
     m.root.rotation.x=THREE.MathUtils.lerp(m.root.rotation.x,tilt,dt*8);
     m.ring.visible=!p.dead;
     m.nameSprite.visible=!p.dead;
-    m.headMat.emissiveIntensity=p.hit>0?.52:.06;
+    m.headMat.color.set(p.hit>.20?'#f4feff':p.c);m.headMat.emissiveIntensity=p.hit>.20?.72:.06;
     if(p.inv>0&&p.inv<1.2)m.root.visible=Math.floor(elapsed*14)%2===0;
+    m.root.updateMatrixWorld(true);
+    const held=setWeaponPose(m,p,dt,d);poseHoldingArm(m,held);
+    const tip=m.weaponHead||m.weaponGroup.position;
+    const heel=new THREE.Vector3(0,0,p.w==='katana'?1.25:.72);m.weaponGroup.localToWorld(heel);
+    const bodyAt=new THREE.Vector3(d.x,d.y,d.z);
+    const weaponMotion=m.lastWeaponHead?tip.clone().sub(m.lastWeaponHead):new THREE.Vector3();
+    if(held&&m.lastBodyAt)weaponMotion.sub(bodyAt.clone().sub(m.lastBodyAt));
+    const moved=weaponMotion.length()/Math.max(.001,dt);m.lastBodyAt=bodyAt;
+    updateRibbon(m.weaponTrail,heel,tip,elapsed,!p.dead&&['blade','katana','hammer','axe'].includes(p.w)&&moved>3.2,.13);
+    m.lastWeaponHead=tip.clone();
+    const left=new THREE.Vector3(-.23,1.05,-.10),right=new THREE.Vector3(.23,1.05,-.10);
+    m.root.localToWorld(left);m.root.localToWorld(right);
+    updateRibbon(m.bodyTrail,left,right,elapsed,!p.dead&&(p.dash>.01||p.shock>.01),.22);
   }
+  animateAxeWorld(dt);
   const me=playerModels.get(selfId);
   aimGuide.visible=!!me&&joined&&phase==='battle';
   if(aimGuide.visible){
