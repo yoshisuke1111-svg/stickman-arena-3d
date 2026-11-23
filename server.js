@@ -11,9 +11,14 @@ const MAX_PLAYERS = 8;
 const MAX_ROOMS = 300;
 const BOUNDS = 12;
 const STEP = 1 / 30;
-// Shared fixed-angle camera basis; CPU and humans always have equal foot speed.
-const CAMERA_YAW=-.62;
-const WALK_SPEED=6.0;
+// Shared, constant 3/4 view: movement is camera-relative for humans AND CPU.
+const CAMERA_YAW = -0.62;
+const WALK_SPEED = 6.0;
+const JUMP_VELOCITY = 12.8;
+const GRAVITY = 12.4;
+const WALL_INNER = BOUNDS - .55;
+const WALL_HEIGHT = 8;
+
 const COLORS = ['#49e2ed','#ff6e9d','#facb57','#ab8bff','#84ef9d','#ff9a53','#ffe77b','#6ea9ff'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const BLOCKS = [
@@ -32,10 +37,11 @@ const WPN = {
   bomb:    { damage: 55, range: 3.6, cd: 1.7, push: 15.0 }
 };
 const BOMB_FUSE=1.45, BOMB_RADIUS=3.6;
-// Mechanics inferred from supplied footage. Damage/cooldowns are prototype values.
-const SKILL_COOLDOWN={blade:5,hammer:7.5,blaster:5.5,katana:6,axe:6.5,bomb:7};
+// The footage shows momentum-led contact, heavy knockbacks and separate Skill/Super
+// attacks. These are original, approximate mechanics, not extracted game values.
+const SKILL_COOLDOWN={blade:5,hammer:7.5,blaster:5.5,katana:6,axe:4.5,bomb:7};
 const SUPER_COOLDOWN={blade:18,hammer:20,blaster:17,katana:19,axe:19,bomb:18};
-const AXE_SKILLS=['cleave','whirl','wave'];
+const AXE_SKILLS=['bubbleTunnel','axeThrow','shockBurst','whirl'];
 const rooms = new Map();
 const random = (a,b) => Math.random()*(b-a)+a;
 const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
@@ -64,7 +70,7 @@ function spawnPoint(room,p) {
   }
   p.x=chosen[0]+random(-.45,.45); p.z=chosen[1]+random(-.45,.45); p.y=0;
   p.vy=0; p.kvx=0; p.kvz=0; p.hp=100; p.dead=false; p.respawnIn=0; p.invuln=1.25;
-  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.jumpLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
+  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.axeBag=[];p.chargeProgress=0;p.jumpLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
 }
 function makePlayer(name,ws,isBot=false) {
   return {
@@ -72,17 +78,17 @@ function makePlayer(name,ws,isBot=false) {
     weapon:'blade', x:0,y:0,z:0,vy:0,kvx:0,kvz:0,driveX:0,driveZ:0, facing:0,pitch:0,aimMotion:0,hp:100,
     input:{}, moveAmount:0, grounded:true, jumpLatch:false, moveFacing:0, dead:false, respawnIn:0, invuln:0,
     attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0, stagger:0, spin:0,hammerSpin:0,hammerPulse:0,
-    hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null
+    hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null,axeBag:[],chargeProgress:0,botMode:0,botJumpTimer:0
   };
 }
 function createRoom() {
   if(rooms.size >= MAX_ROOMS) return null;
   const code=makeCode(); if(!code) return null;
-  const room = {code, players:new Map(), host:null, phase:'lobby', timer:180, elapsed:0, events:[], projectiles:[], bombs:[], hazardActive:false, lastActivity:nowMs(), snapAt:0};
+  const room = {code, players:new Map(), host:null, phase:'lobby', timer:180, elapsed:0, events:[], projectiles:[], bombs:[], axeTunnels:[], axePulses:[], hazardActive:false, lastActivity:nowMs(), snapAt:0};
   rooms.set(code,room); return room;
 }
 function packPlayer(p) {
-  return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),bf:+p.moveFacing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
+  return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),bf:+p.facing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
     hp:Math.ceil(p.hp),dead:p.dead,k:p.kills,d:p.deaths,s:p.score,bot:p.isBot,a:+p.swing.toFixed(2),hit:+p.hit.toFixed(2),
     m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2)};
 }
@@ -90,6 +96,8 @@ function packState(room) {
   return {t:'state',room:room.code,phase:room.phase,host:room.host,time:Math.max(0,Math.ceil(room.timer)),
     players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',f:+Math.atan2(b.dx,b.dz).toFixed(2),pitch:+Math.asin(clamp(b.dy||0,-1,1)).toFixed(2)})),
     bombs:room.bombs.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),fuse:+b.fuse.toFixed(2),color:b.color})),
+    tunnels:room.axeTunnels.map(t=>({id:t.id,owner:t.owner,x:+t.x.toFixed(2),y:+t.y.toFixed(2),z:+t.z.toFixed(2),f:+t.f.toFixed(3),pitch:+t.pitch.toFixed(3),length:+t.length.toFixed(2),age:+t.age.toFixed(2),life:+(t.duration-t.age).toFixed(2)})),
+    pulses:room.axePulses.map(t=>({id:t.id,x:+(t.x+t.dx*Math.min(t.age/.28,1)*2.5).toFixed(2),y:+t.y.toFixed(2),z:+(t.z+t.dz*Math.min(t.age/.28,1)*2.5).toFixed(2),age:+t.age.toFixed(2)})),
     hazard:false, events:room.events.splice(0)};
 }
 function broadcastState(room) { roomMsg(room,packState(room)); }
@@ -116,7 +124,7 @@ function removePlayer(ws) {
   else { event(room,'leave',{name:p.name});broadcastState(room); }
 }
 function start(room) {
-  room.phase='battle'; room.timer=180; room.elapsed=0; room.events=[]; room.projectiles=[]; room.bombs=[];
+  room.phase='battle'; room.timer=180; room.elapsed=0; room.events=[]; room.projectiles=[]; room.bombs=[]; room.axeTunnels=[];room.axePulses=[];
   for(const p of room.players.values()) {p.kills=0;p.deaths=0;p.score=0;p.attackCd=0;p.skillCd=0;p.superCd=0;spawnPoint(room,p);}
   event(room,'start'); broadcastState(room);
 }
@@ -201,7 +209,8 @@ function advanceBombs(room,dt) {
     b.x+=b.vx*dt;b.z+=b.vz*dt;b.vy-=21*dt;b.y+=b.vy*dt;
     // Floor and crate tops reflect the thrown bombs instead of stopping them instantly.
     let surface=0;
-    if(Math.abs(b.x)>BOUNDS||Math.abs(b.z)>BOUNDS)surface=-1e6;
+    if(Math.abs(b.x)>WALL_INNER){b.x=clamp(b.x,-WALL_INNER,WALL_INNER);b.vx*=-.55;}
+    if(Math.abs(b.z)>WALL_INNER){b.z=clamp(b.z,-WALL_INNER,WALL_INNER);b.vz*=-.55;}
     for(const block of BLOCKS)if(Math.abs(b.x-block.x)<block.w/2+.12 && Math.abs(b.z-block.z)<block.d/2+.12 && oldY>=block.h-.2){
       surface=Math.max(surface,block.h);
     }
@@ -213,11 +222,11 @@ function advanceBombs(room,dt) {
     if(b.fuse<=0 || b.y<-8){detonate(room,b);room.bombs.splice(i,1);}
   }
 }
-// Server-owned moving energy strikes and weapon-specific abilities.
+// Emit a real, server-authoritative moving strike. The client only renders it.
 function wave(room,p,kind,offset=0,opts={}) {
   if(room.projectiles.length>=110)room.projectiles.shift();
   const angle=p.facing+offset;
-  const speed=opts.speed??(kind==='dragon'?18:kind==='axeWave'?15:16);
+  const speed=opts.speed??(kind==='dragon'?8.3:kind==='axeThrown'?9:kind==='axeWave'?8.1:8.8);
   room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,kind,
     x:p.x+Math.sin(angle)*1.05,y:p.y+(opts.height??1.35),z:p.z+Math.cos(angle)*1.05,
     dx:Math.sin(angle)*Math.cos(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
@@ -225,7 +234,7 @@ function wave(room,p,kind,offset=0,opts={}) {
     dz:Math.cos(angle)*Math.cos(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
     speed,life:opts.life??1.2,
     radius:opts.radius??.95,damage:opts.damage??24,push:opts.push??11,
-    pierce:opts.pierce??false,hitIds:new Set(),color:opts.color||p.color});
+    pierce:opts.pierce??false,hitIds:new Set(),bounces:opts.bounces??0,color:opts.color||p.color});
 }
 function areaImpact(room,p,radius,amount,push,kind) {
   event(room,'impact',{id:p.id,kind,weapon:p.weapon,x:p.x,y:p.y+1,z:p.z,color:p.color,radius});
@@ -235,26 +244,80 @@ function areaImpact(room,p,radius,amount,push,kind) {
     damage(room,q,p,Math.round(amount*falloff),push*falloff);
   }
 }
+// Axe's blue transparent ribbon/tube from the user's video is placed in the
+// current viewing direction, with animated bubbles and a delayed front pulse.
+function placeAxeTunnel(room,p) {
+  if(room.axeTunnels.length>=16)room.axeTunnels.shift();
+  const f=p.facing, pitch=clamp(p.pitch,-.45,.45),dx=Math.sin(f),dz=Math.cos(f);
+  const x=p.x+dx*.7,z=p.z+dz*.7;
+  let length=.8;
+  for(let t=1;t<=10;t+=.25){
+    const px=x+dx*t,pz=z+dz*t;
+    if(Math.abs(px)>WALL_INNER-.2||Math.abs(pz)>WALL_INNER-.2||hitBlock(px,pz,p.y+1.3))break;
+    length=t;
+  }
+  room.axeTunnels.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x,y:p.y+1.45,z,f,pitch,
+    dx,dz,length,age:0,duration:3.4,pulseDone:false,hitIds:new Set()});
+}
+function shockAt(room,owner,at,rad,damageValue,pushValue,kind){
+  event(room,'impact',{id:owner?.id,kind,weapon:'axe',x:at.x,y:at.y,z:at.z,color:'#88f6ff',radius:rad});
+  for(const q of room.players.values()){
+    if(q.dead||q.id===owner?.id||Math.hypot(q.x-at.x,q.z-at.z)>rad||Math.abs(q.y-at.y)>3.2||isBlocked(at,q))continue;
+    damage(room,q,owner,damageValue,pushValue,at);
+  }
+}
+function advanceAxeEffects(room,dt){
+  for(let i=room.axeTunnels.length-1;i>=0;i--){
+    const t=room.axeTunnels[i];t.age+=dt;
+    const owner=room.players.get(t.owner);
+    if(t.age>.30&&!t.pulseDone){
+      t.pulseDone=true;
+      const distAlong=Math.min(t.length,2.3);
+      shockAt(room,owner,{x:t.x+t.dx*distAlong,y:t.y,z:t.z+t.dz*distAlong},1.85,20,11,'tunnelPulse');
+    }
+    if(t.age>.38&&t.age<2.8){
+      for(const q of room.players.values()){
+        if(q.id===t.owner||q.dead||t.hitIds.has(q.id))continue;
+        const vx=q.x-t.x,vz=q.z-t.z,along=vx*t.dx+vz*t.dz;
+        const side=Math.abs(vx*t.dz-vz*t.dx);
+        if(along>0&&along<t.length&&side<1.15&&Math.abs(q.y+1.1-t.y)<1.9&&!isBlocked({x:t.x,z:t.z,y:t.y},{x:q.x,z:q.z,y:q.y+1})){
+          if(damage(room,q,owner,13,7,{x:t.x-t.dx,z:t.z-t.dz,y:t.y}))t.hitIds.add(q.id);
+        }
+      }
+    }
+    if(t.age>=t.duration)room.axeTunnels.splice(i,1);
+  }
+  for(let i=room.axePulses.length-1;i>=0;i--){
+    const pulse=room.axePulses[i];pulse.age+=dt;
+    if(!pulse.hit&&pulse.age>=.28){
+      pulse.hit=true;
+      const x=clamp(pulse.x+pulse.dx*2.5,-WALL_INNER+.1,WALL_INNER-.1);
+      const z=clamp(pulse.z+pulse.dz*2.5,-WALL_INNER+.1,WALL_INNER-.1);
+      shockAt(room,room.players.get(pulse.owner),{x,y:pulse.y,z},3.7,31,14,'axeFrontShock');
+    }
+    if(pulse.age>=.9)room.axePulses.splice(i,1);
+  }
+}
 function skill(room,p) {
   if(p.skillCd>0||p.dead||room.phase!=='battle')return;
   p.skillCd=SKILL_COOLDOWN[p.weapon];p.swing=.55;
   let variant='';
   switch(p.weapon){
     case 'blade':
-      variant='swordCharge';p.dashTime=.43;p.dashHits=new Set();p.vy=Math.max(p.vy,Math.max(0,p.pitch)*5.5);break;
+      variant='swordCharge';p.dashTime=.62;p.chargeProgress=0;p.dashHits=new Set();p.vy=Math.max(p.vy,Math.max(0,p.pitch)*3);break;
     case 'katana':
-      variant='dragon';wave(room,p,'dragon',0,{radius:1.15,damage:36,push:13,life:1.6,speed:20,pierce:true,color:'#5ae6ff'});break;
+      variant='dragon';wave(room,p,'dragon',0,{radius:1.05,damage:33,push:11,life:2.5,speed:8.3,pierce:true,color:'#5ae6ff'});break;
     case 'hammer':
       variant='hammerSpin';p.hammerSpin=1.25;p.hammerPulse=0;break;
     case 'axe': {
-      variant=AXE_SKILLS[Math.floor(Math.random()*AXE_SKILLS.length)];
-      if(variant==='whirl')areaImpact(room,p,3.65,27,13,'axeWhirl');
-      else if(variant==='wave'){
-        wave(room,p,'axeWave',-.25,{damage:27,push:10,life:.95,color:'#4cefed'});
-        wave(room,p,'axeWave',.25,{damage:27,push:10,life:.95,color:'#4cefed'});
-      } else {
-        p.dashTime=.32;p.dashHits=new Set();
-        areaImpact(room,p,2.7,35,16,'axeCleave');
+      // Shuffle bag gives random order without repeating the same ability four times.
+      if(!p.axeBag?.length){p.axeBag=[...AXE_SKILLS];for(let i=p.axeBag.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[p.axeBag[i],p.axeBag[j]]=[p.axeBag[j],p.axeBag[i]];}}
+      variant=p.axeBag.pop();
+      if(variant==='bubbleTunnel')placeAxeTunnel(room,p);
+      else if(variant==='axeThrow')wave(room,p,'axeThrown',0,{radius:.7,damage:31,push:10,life:2.7,speed:9,bounces:1,color:'#b6f0ff'});
+      else if(variant==='shockBurst')room.axePulses.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x:p.x,y:p.y+1,z:p.z,dx:Math.sin(p.facing),dz:Math.cos(p.facing),age:0,hit:false});
+      else if(variant==='whirl'){
+        p.hammerSpin=.95;p.hammerPulse=.16;
       }
       break;
     }
@@ -282,10 +345,10 @@ function superAttack(room,p) {
       // In 3D, five slightly separated aim elevations create a broader fan.
       variant='fanSlashes';
       for(const [i,a] of [-.38,-.19,0,.19,.38].entries())
-        wave(room,p,'slash',a,{damage:25,push:10,life:1.13,speed:18,radius:.85,pitchOffset:[-.10,.05,0,.05,-.10][i],color:'#a0ecff'});
+        wave(room,p,'slash',a,{damage:25,push:10,life:2.8,speed:8.6,radius:.85,pitchOffset:[-.10,.05,0,.05,-.10][i],color:'#a0ecff'});
       break;
     case 'blaster':
-      variant='laserFan';for(const a of [-.36,-.18,0,.18,.36])wave(room,p,'blaster',a,{damage:20,push:7,radius:.8,speed:26,life:1.4});break;
+      variant='laserFan';for(const a of [-.36,-.18,0,.18,.36])wave(room,p,'blaster',a,{damage:20,push:7,radius:.8,speed:26,life:1.7});break;
     case 'bomb':
       variant='bigBang';areaImpact(room,p,5.4,44,20,'bigBang');break;
   }
@@ -305,34 +368,56 @@ function resolveBlocks(p) {
       if(px<pz)p.x+=Math.sign(p.x-b.x||1)*px;else p.z+=Math.sign(p.z-b.z||1)*pz;}
   }
 }
-function simulateBot(room,p,dt) {
+function simulateBot(room,p,dt){
   if(p.dead)return;
   const enemies=[...room.players.values()].filter(q=>q.id!==p.id&&!q.dead);
   if(!enemies.length){p.input={};return;}
   const target=enemies.sort((a,b)=>dist(a,p)-dist(b,p))[0];
-  const dx=target.x-p.x,dz=target.z-p.z,d=Math.hypot(dx,dz);
+  const dx=target.x-p.x,dz=target.z-p.z,d=Math.max(.01,Math.hypot(dx,dz));
   p.facing=Math.atan2(dx,dz);
-  p.pitch=clamp(Math.atan2(target.y-p.y,d),-.5,.5);
-  // CPU selects keys, then follows exactly the same speed/collision path as players.
-  const melee=!['blaster','bomb'].includes(p.weapon), desired=melee?2.1:7.5;
-  let ax=0,az=0;
-  if(d>desired+.7){ax=dx/Math.max(d,.01);az=dz/Math.max(d,.01);}
-  else if(d<desired-1.1){ax=-dx/Math.max(d,.01);az=-dz/Math.max(d,.01);}
-  const strafe=Math.sin(room.elapsed*1.6+Number(p.id)*1.7)*.28;
-  ax+=dz/Math.max(d,.01)*strafe;az-=dx/Math.max(d,.01)*strafe;
-  const magnitude=Math.hypot(ax,az);
-  if(magnitude>.1){ax/=magnitude;az/=magnitude;}
-  const sin=Math.sin(CAMERA_YAW),cos=Math.cos(CAMERA_YAW);
-  const forward=ax*sin+az*cos,right=-ax*cos+az*sin;
-  p.input={w:forward>.24,s:forward<-.24,a:right<-.24,d:right>.24,
-    jump:Math.random()<.006,attack:d<(melee?3.4:11),
-    skill:d<7&&Math.random()<.026,super:d<8&&Math.random()<.012};
+  p.pitch=clamp(Math.atan2(target.y-p.y,d),-.5,.6);
+  p.botDecision-=dt;
+  if(p.botDecision<=0){
+    p.botDecision=random(.65,1.8);
+    p.botMode=Math.floor(random(0,4));
+  }
+  const ranged=p.weapon==='blaster'||p.weapon==='bomb';
+  // Ranged bots sometimes close for a brawl: never retreat endlessly.
+  const desired=ranged?(p.botMode===0?3.2:p.botMode===1?5.2:2.8):(p.botMode===2?2.9:1.7);
+  let forward=0;
+  if(d>desired+.55)forward=1;
+  else if(d<desired-.75)forward= p.botMode===3?-.65:.2;
+  else forward=p.botMode===0?.3:0;
+  let ax=dx/d*forward,az=dz/d*forward;
+  const strafe=(p.botMode%2===0?1:-1)*(d<8?.48:.18);
+  ax+=dz/d*strafe;az-=dx/d*strafe;
+  // Avoid walls instead of pressing against the boundary.
+  if(Math.abs(p.x)>WALL_INNER-2)ax+=-Math.sign(p.x)*.95;
+  if(Math.abs(p.z)>WALL_INNER-2)az+=-Math.sign(p.z)*.95;
+  // Dodge visible incoming shots.
+  for(const shot of room.projectiles){
+    if(shot.owner===p.id)continue;
+    const to=dist(shot,p);if(to>2.8)continue;
+    const vx=p.x-shot.x,vz=p.z-shot.z;
+    if(vx*shot.dx+vz*shot.dz>0){ax+=shot.dz*.95;az-=shot.dx*.95;break;}
+  }
+  const length=Math.hypot(ax,az);if(length>.1){ax/=length;az/=length;}
+  // Direction is body and camera facing for both human and CPU.
+  const sin=Math.sin(p.facing),cos=Math.cos(p.facing);
+  const front=ax*sin+az*cos,right=-ax*cos+az*sin;
+  const blocked=isBlocked(p,target);
+  const jump=(blocked&&p.grounded&&Math.random()<.18)||
+    (p.botMode===1&&p.grounded&&Math.random()<.009);
+  p.input={w:front>.25,s:front<-.25,d:right>.25,a:right<-.25,jump,
+    attack:d<(ranged?9.2:3.3)&&!blocked,
+    skill:d<7.5&&Math.random()<.026,super:d<8&&Math.random()<.013};
 }
+
 function tick(room,dt) {
   if(room.phase!=='battle') return;
   room.elapsed+=dt;room.timer-=dt;
   if(room.timer<=0){room.timer=0;room.phase='finished'; event(room,'end');broadcastState(room);return;}
-  room.hazardActive=false;
+  room.hazardActive=false; // Original footage has no artificial periodic arena damage.
   for(const p of room.players.values()) {
     p.attackCd=Math.max(0,p.attackCd-dt); p.skillCd=Math.max(0,p.skillCd-dt);p.superCd=Math.max(0,p.superCd-dt);
     p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.stagger=Math.max(0,p.stagger-dt);p.spin=Math.max(0,p.spin-dt*1.9);p.invuln=Math.max(0,p.invuln-dt);p.aimMotion=Math.max(0,p.aimMotion-dt*1.1);
@@ -347,33 +432,37 @@ function tick(room,dt) {
     if(p.dead){p.respawnIn-=dt;if(p.respawnIn<=0)spawnPoint(room,p);continue;}
     if(p.isBot) simulateBot(room,p,dt);
     const k=p.input||{};
-    let vx=Number(!!k.d)-Number(!!k.a),vz=Number(!!k.w)-Number(!!k.s);
-    const len=Math.hypot(vx,vz)||1;vx/=len;vz/=len;
-    const sin=Math.sin(CAMERA_YAW),cos=Math.cos(CAMERA_YAW);
+    let vx=(Number(!!k.d)-Number(!!k.a)),vz=(Number(!!k.w)-Number(!!k.s));
+    const length=Math.hypot(vx,vz)||1;vx/=length;vz/=length;
+    // All movement uses the same fixed camera basis, never weapon facing.
+    const sin=Math.sin(p.facing),cos=Math.cos(p.facing);
     let dx=-vx*cos+vz*sin,dz=vz*cos+vx*sin;
     p.moveAmount=(!!k.w||!!k.a||!!k.s||!!k.d)?1:0;
-    if(p.moveAmount)p.moveFacing=Math.atan2(dx,dz);
-    // Legacy click-thrust would make CPU move faster than humans: disabled.
+    p.moveFacing=p.facing; // weapon, torso and camera share this yaw
+    // Clear legacy B-mode momentum so returning players and bots are equal.
     p.driveX=0;p.driveZ=0;
     if(p.dashTime>0){
-      p.dashTime=Math.max(0,p.dashTime-dt);dx=Math.sin(p.facing);dz=Math.cos(p.facing);
+      p.dashTime=Math.max(0,p.dashTime-dt);p.chargeProgress=Math.min(1,p.chargeProgress+dt/.62);dx=Math.sin(p.facing);dz=Math.cos(p.facing);
       for(const q of room.players.values()) if(q.id!==p.id&&!p.dashHits.has(q.id)&&!q.dead&&dist(p,q)<1.5 && Math.abs(p.y-q.y)<2) {
         if(damage(room,q,p,22,10))p.dashHits.add(q.id);
       }
     }
-    const speed=p.dashTime>0?17:WALK_SPEED;
-    // Substeps prevent fast knockback and dashes from tunnelling into cover.
+    const speed=p.dashTime>0?WALK_SPEED+9*Math.sin(Math.PI*p.chargeProgress):WALK_SPEED;
+    // Substepping prevents high-speed knockback/dashes from tunnelling into cover.
     const moveX=(dx*speed+p.kvx)*dt,moveZ=(dz*speed+p.kvz)*dt;
     const subdivisions=Math.max(1,Math.ceil(Math.hypot(moveX,moveZ)/.22));
     for(let i=0;i<subdivisions;i++){
       p.x+=moveX/subdivisions;p.z+=moveZ/subdivisions;resolveBlocks(p);
+      if(Math.abs(p.x)>WALL_INNER){p.x=clamp(p.x,-WALL_INNER,WALL_INNER);p.kvx=0;}
+      if(Math.abs(p.z)>WALL_INNER){p.z=clamp(p.z,-WALL_INNER,WALL_INNER);p.kvz=0;}
     }
     p.kvx*=Math.exp(-5*dt);p.kvz*=Math.exp(-5*dt);
     const overFloor = Math.abs(p.x)<=BOUNDS && Math.abs(p.z)<=BOUNDS;
-    if(k.jump&&p.grounded&&!p.jumpLatch){p.vy=9.2;p.grounded=false;}
+    if(k.jump&&p.grounded&&!p.jumpLatch){p.vy=JUMP_VELOCITY;p.grounded=false;}
     p.jumpLatch=!!k.jump;
     const oldY=p.y;
-    p.vy-=22*dt;p.y+=p.vy*dt;
+    p.vy-=GRAVITY*dt;p.y+=p.vy*dt;
+    // Tops are real collision surfaces; a fighter must not sink into a platform.
     let floor=overFloor?0:-Infinity;
     if(p.vy<=0)for(const b of BLOCKS){
       if(Math.abs(p.x-b.x)<b.w/2-.08 && Math.abs(p.z-b.z)<b.d/2-.08 && oldY>=b.h-.18)
@@ -382,26 +471,47 @@ function tick(room,dt) {
     if(p.y<=floor && oldY>=floor-.18){p.y=floor;p.vy=0;p.grounded=true;}
     else p.grounded=false;
     if(p.y<-9){die(room,p,null);continue;}
-    const melee=!['blaster','bomb'].includes(p.weapon);
+    // Ordinary swing follows movement, as in the supplied footage. Click remains
+    // an optional deliberate swing for precise PC combat.
+    const melee= !['blaster','bomb'].includes(p.weapon);
     const near=melee&&[...room.players.values()].some(q=>q.id!==p.id&&!q.dead&&dist(p,q)<WPN[p.weapon].range+.5);
     if((!melee&&k.attack)||(melee&&(k.attack||(near&&(p.moveAmount>.2||p.aimMotion>.15||p.dashTime>0)))))attack(room,p);
     if(k.skill)skill(room,p);
     if(k.super)superAttack(room,p);
+
     if(p.dashTime===0)p.dashHits.clear();
   }
   for(let i=room.projectiles.length-1;i>=0;i--){
-    const b=room.projectiles[i];
-    const speed=b.speed??19;
-    b.x+=b.dx*speed*dt;b.z+=b.dz*speed*dt;b.y+=(b.dy||0)*speed*dt;b.life-=dt;
-    const radius=b.radius??.65;
-    let remove=b.life<=0||Math.abs(b.x)>BOUNDS+2||Math.abs(b.z)>BOUNDS+2||hitBlock(b.x,b.z,b.y);
-    if(!remove){
+    const b=room.projectiles[i];b.life-=dt;
+    const speed=b.speed??(b.kind==='blaster'?16:8.8),travel=speed*dt;
+    const steps=Math.max(1,Math.ceil(travel/.19));
+    let remove=b.life<=0;
+    for(let step=0;step<steps&&!remove;step++){
+      const oldX=b.x,oldZ=b.z,oldY=b.y;
+      b.x+=b.dx*travel/steps;b.y+=(b.dy||0)*travel/steps;b.z+=b.dz*travel/steps;
+      const wallX=Math.abs(b.x)>=WALL_INNER,wallZ=Math.abs(b.z)>=WALL_INNER;
+      const obstacle=hitBlock(b.x,b.z,b.y)||wallX||wallZ;
+      if(obstacle){
+        if(b.kind==='axeThrown'&&b.bounces>0){
+          b.bounces--;
+          if(wallX||(!wallZ&&Math.abs(b.x-oldX)>.002))b.dx*=-1;
+          if(wallZ||(!wallX&&Math.abs(b.z-oldZ)>.002))b.dz*=-1;
+          b.x=clamp(oldX,-WALL_INNER+.02,WALL_INNER-.02);
+          b.z=clamp(oldZ,-WALL_INNER+.02,WALL_INNER-.02);
+          b.speed*=.72;
+          event(room,'bounce',{kind:b.kind,x:b.x,y:b.y,z:b.z});
+        }else{
+          event(room,'projectileBreak',{kind:b.kind,x:oldX,y:oldY,z:oldZ});remove=true;
+        }
+        break;
+      }
+      const radius=b.radius??.65;
       const owner=room.players.get(b.owner);
-      for(const p of room.players.values()){
-        if(p.id===b.owner||p.dead||b.hitIds?.has(p.id))continue;
-        if(Math.hypot(b.x-p.x,b.z-p.z)<radius && Math.abs(b.y-(p.y+1.2))<1.65){
-          if(damage(room,p,owner,b.damage??17,b.push??5)){
-            if(!b.hitIds)b.hitIds=new Set();b.hitIds.add(p.id);
+      for(const q of room.players.values()){
+        if(q.id===b.owner||q.dead||b.hitIds?.has(q.id))continue;
+        if(Math.hypot(b.x-q.x,b.z-q.z)<radius+.32&&Math.abs(b.y-(q.y+1.2))<1.55){
+          if(damage(room,q,owner,b.damage??17,b.push??5)){
+            if(!b.hitIds)b.hitIds=new Set();b.hitIds.add(q.id);
             if(!b.pierce){remove=true;break;}
           }
         }
@@ -409,6 +519,7 @@ function tick(room,dt) {
     }
     if(remove)room.projectiles.splice(i,1);
   }
+  advanceAxeEffects(room,dt);
   advanceBombs(room,dt);
 }
 const MIME={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.ico':'image/x-icon'};
@@ -455,7 +566,7 @@ wss.on('connection',ws=>{
       } else if(m.t==='weapon')p.weapon=safeWeapon(m.weapon);
       else if(m.t==='start'&&room.host===p.id){start(room);}
       else if(m.t==='bot'&&room.host===p.id && room.players.size<MAX_PLAYERS){
-        const bot=makePlayer('CPU '+(room.players.size),'',true);bot.weapon=Object.keys(WPN)[Math.floor(Math.random()*Object.keys(WPN).length)];
+        const bot=makePlayer('CPU '+(room.players.size),'',true);bot.weapon=['blade','katana','hammer','axe','blaster','bomb'][(room.players.size-1)%6];
         room.players.set(bot.id,bot);spawnPoint(room,bot);event(room,'join',{name:bot.name});broadcastState(room);
       } else if(m.t==='removeBots'&&room.host===p.id){
         for(const q of room.players.values())if(q.isBot)room.players.delete(q.id);
