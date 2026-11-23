@@ -225,6 +225,24 @@ function labelSprite(m,p){
 }
 function destroyModel(m){scene.remove(m.root);m.nameSprite.material.map?.dispose();m.nameSprite.material.dispose();}
 const playerModels=new Map();
+
+// A solid 3D crescent, not a ring or a flat copied sprite.
+function crescentGeometry(radius=1,angleWidth=Math.PI*1.25){
+  const count=28,verts=[],a0=-(Math.PI+angleWidth)/2,a1=(angleWidth-Math.PI)/2;
+  const outer=radius*1.12,inner=radius*.66;
+  for(let i=0;i<count-1;i++){
+    const a=a0+(a1-a0)*i/(count-1),b=a0+(a1-a0)*(i+1)/(count-1);
+    const o1=[Math.cos(a)*outer,Math.sin(a)*outer,0],o2=[Math.cos(b)*outer,Math.sin(b)*outer,0];
+    const i1=[Math.cos(a)*inner,Math.sin(a)*inner,.035],i2=[Math.cos(b)*inner,Math.sin(b)*inner,.035];
+    verts.push(...o1,...i1,...o2,...i1,...i2,...o2);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
+  geo.computeVertexNormals();return geo;
+}
+function crescentMesh(color,size=1,opacity=.82){
+  return new THREE.Mesh(crescentGeometry(size),new THREE.MeshBasicMaterial({color,transparent:true,opacity,side:THREE.DoubleSide,depthWrite:false,fog:false}));
+}
 const bullets=new Map();
 const thrownBombs=new Map();
 const effects=[];
@@ -268,10 +286,11 @@ function syncWorld(players,shots,bombStates=[]){
           horn.rotation.z=side*.62;horn.position.set(side*.26,.33,1.17);group.add(horn);
         }
       }else if(p.kind==='slash'||p.kind==='axeWave'){
-        const crescent=new THREE.Mesh(new THREE.TorusGeometry(p.kind==='axeWave'?1.0:.85,.10,7,36,Math.PI*1.25),glowMaterial);
-        crescent.rotation.set(0,0,-.75);group.add(crescent);
-        const inner=new THREE.Mesh(new THREE.TorusGeometry(.70,.028,5,28,Math.PI*1.2),glowMaterial);
-        inner.rotation.z=-.7;group.add(inner);
+        const stroke=crescentMesh(color,p.kind==='axeWave'?1.26:1.02,.91);
+        stroke.rotation.z=-.5;group.add(stroke);
+        const rim=new THREE.Mesh(new THREE.TorusGeometry(p.kind==='axeWave'?1.28:1.05,.035,6,35,Math.PI*1.23),
+          new THREE.MeshBasicMaterial({color:'#fff7d9',transparent:true,opacity:.7,side:THREE.DoubleSide}));
+        rim.rotation.z=-.5;group.add(rim);
       }else{
         const core=new THREE.Mesh(new THREE.SphereGeometry(.2,12,8),new THREE.MeshBasicMaterial({color:p.color}));
         group.add(core);
@@ -331,7 +350,7 @@ function animateEffects(dt){
   for(let i=effects.length-1;i>=0;i--){const e=effects[i];e.t+=dt;const life=1-e.t/e.max;
     for(const bit of e.bits){bit.mesh.position.addScaledVector(bit.v,dt);bit.mesh.material.opacity=Math.max(0,life);bit.mesh.rotation.x+=dt*9;bit.mesh.rotation.y+=dt*13;}
     if(e.ring){const scale=1+e.t*5;e.ring.scale.setScalar(scale);e.ring.material.opacity=Math.max(0,life*.8);}
-    if(e.extra)for(const m of e.extra){m.material.opacity=Math.max(0,life*.87);m.scale.setScalar(1+e.t*(e.heavy?3.5:1.5));m.rotation.z+=dt*(e.heavy?1:3);}
+    if(e.extra)for(const m of e.extra){m.material.opacity=Math.max(0,life*.90);m.scale.setScalar(1+e.t*(e.heavy?.65:1.5));m.rotation.z+=dt*(e.heavy?7:2.4);}
     if(e.t>=e.max){scene.remove(e.group);e.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();obj.material.dispose();}});effects.splice(i,1);}
   }
 }
@@ -339,29 +358,32 @@ function animateEffects(dt){
 function castEffect(e){
   const model=playerModels.get(e.id);
   const x=Number.isFinite(e.x)?e.x:(model?.display.x??0);
-  const y=Number.isFinite(e.y)?e.y:((model?.display.y??0)+1.2);
+  const y=Number.isFinite(e.y)?e.y:((model?.display.y??0)+1.25);
   const z=Number.isFinite(e.z)?e.z:(model?.display.z??0);
   const kind=e.variant||e.kind||e.weapon||'blade';
-  const heavy=/hammer|quake|bang|whirl|cyclone|Shock/i.test(kind);
-  const color=/dragon/i.test(kind)?'#69f0ff':/bigBang/i.test(kind)?'#ffba5a':e.color||'#58e9f3';
-  const group=new THREE.Group();group.position.set(x,heavy?.15:y,z);scene.add(group);
+  const color=kind==='dragon'?'#89ebff':kind==='hammerSpin'?'#fff0cb':'#b9f7ff';
+  const group=new THREE.Group();group.position.set(x,y,z);
+  group.rotation.y=e.f??model?.display.f??0;scene.add(group);
   const meshes=[];
-  const glowing=(size,thickness,angle)=>{
-    const mesh=new THREE.Mesh(new THREE.TorusGeometry(size,thickness,8,48,Math.PI*(heavy?1.9:1.32)),
-      new THREE.MeshBasicMaterial({color,transparent:true,opacity:.88,side:THREE.DoubleSide,depthWrite:false}));
-    mesh.rotation.z=angle;mesh.rotation.y=e.f||model?.display.f||0;
+  const addStroke=(size,angle,zOffset=.85)=>{
+    const mesh=crescentMesh(color,size,.83);mesh.rotation.z=angle;mesh.position.z=zOffset;
     group.add(mesh);meshes.push(mesh);return mesh;
   };
-  if(heavy){
-    for(let i=0;i<2;i++){
-      const ring=glowing(.8+i*.38,.07+i*.025,0);ring.rotation.x=-Math.PI/2;
-    }
+  const spinning=kind==='hammerSpin';
+  if(kind==='fanSlashes'){
+    addStroke(1.65,-.35,1.1);addStroke(1.15,.14,1.12);
+  }else if(spinning){
+    for(let i=0;i<3;i++){const m=addStroke(.8+i*.24,i*2.1,.7);m.rotation.x=i*.36;}
+  }else if(kind==='swordCharge'){
+    const m=addStroke(1.55,-.35,.4);m.scale.y=.4;addStroke(1.0,.25,.85);
+  }else if(['axe','hammer','blade','katana'].includes(kind)){
+    const m=addStroke(kind==='hammer'?1.8:1.34,kind==='axe'?-.75:.5,.82);m.rotation.x=-.08;
+  }else if(kind==='dragon'){
+    addStroke(1.05,-.6,1.2);
   }else{
-    const arc=glowing(kind==='swordArc'?1.9:kind==='axeWave'?2.35:1.55,.12,-.3);
-    arc.rotation.y=e.f||model?.display.f||0;
-    const second=glowing(kind==='swordArc'?1.7:1.35,.045,-.3);second.rotation.y=arc.rotation.y;
+    addStroke(1.22,-.4,1);
   }
-  effects.push({group,bits:[],ring:null,extra:meshes,t:0,max:heavy?.85:.45,heavy});
+  effects.push({group,bits:[],ring:null,extra:meshes,t:0,max:spinning?.65:.32,heavy:spinning});
 }
 const previewGroup=new THREE.Group();scene.add(previewGroup);
 function makePreview(){
