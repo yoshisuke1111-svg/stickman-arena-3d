@@ -149,15 +149,13 @@ test('katana launches a luminous dragon projectile and hits at range',()=>{
   for(let i=0;i<18;i++)api.tick(room,1/30);
   assert.ok(p2.hp<100,'dragon projectile deals damage');
 });
-test('hammer shockwave launches enemies and causes stagger',()=>{
-  const {api,room,p1,p2}=setup();api.start(room);
-  p1.weapon='hammer';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;
-  p2.x=0;p2.z=2.8;p2.y=0;p2.hp=100;p2.invuln=0;
-  api.skill(room,p1);
-  assert.ok(p2.hp<100);
-  assert.ok(p2.kvz>10,'strong knockback');
-  assert.ok(p2.stagger>.3);
-  assert.ok(room.events.some(e=>e.type==='impact'&&e.kind==='hammerShock'));
+test('hammer skill spins weapon and makes nearby contact',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.weapon='hammer';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;
+ p2.x=0;p2.z=2.8;p2.y=0;p2.hp=100;p2.invuln=0;
+ api.skill(room,p1);assert.ok(p1.hammerSpin>1);
+ api.tick(room,1/30);assert.ok(p2.hp<100);assert.ok(p2.kvz>0);
+ assert.ok(room.events.some(e=>e.type==='skillcast'&&e.variant==='hammerSpin'));
 });
 test('axe Skill has random cleave, whirlwind and wave variants',()=>{
   const {api,room,p1,p2}=setup();api.start(room);
@@ -194,4 +192,47 @@ test('high knockback stays outside solid cover rather than tunneling through it'
   p2.x=10;p2.z=10;p2.input={};
   for(let i=0;i<40;i++)api.tick(room,1/30);
   assert.ok(p1.x<=-5.75-.43,`x=${p1.x}`);
+});
+
+test('B: mouse hold thrust accelerates and releasing brakes',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.x=0;p1.z=0;p1.facing=0;p1.pitch=0;p1.input={thrust:true};p1.invuln=0;
+ p2.x=9;p2.z=9;p2.input={};
+ for(let i=0;i<30;i++)api.tick(room,1/30);
+ assert.ok(p1.z>2.5);const old=p1.z;p1.input={};
+ for(let i=0;i<45;i++)api.tick(room,1/30);
+ assert.ok(p1.z-old<1.5);
+});
+test('B: weapon aim heading determines thrust direction',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.x=0;p1.z=0;p1.facing=Math.PI/2;p1.pitch=0;p1.input={thrust:true};
+ p2.x=9;p2.z=9;p2.input={};
+ for(let i=0;i<10;i++)api.tick(room,1/30);
+ assert.ok(p1.x>.6);assert.ok(Math.abs(p1.z)<.1);
+});
+test('B: upward aim and held thrust jump without infinite flight',()=>{
+ const {api,room,p1,p2}=setup();api.start(room);
+ p1.x=0;p1.z=0;p1.pitch=.85;p1.facing=0;p1.input={thrust:true};p1.grounded=true;
+ p2.x=9;p2.z=9;p2.input={};
+ for(let i=0;i<10;i++)api.tick(room,1/30);
+ assert.ok(p1.y>1);
+ for(let i=0;i<300;i++)api.tick(room,1/30);
+ assert.ok(p1.y<25);
+});
+test('sword skill propels fighter instead of launching a slash',()=>{
+ const {api,room,p1}=setup();api.start(room);p1.weapon='blade';
+ const count=room.projectiles.length;api.skill(room,p1);
+ assert.ok(p1.dashTime>0);assert.equal(room.projectiles.length,count);
+ assert.equal(room.events.find(e=>e.type==='skillcast')?.variant,'swordCharge');
+});
+test('sword katana axe and hammer Super each fire five angled slashes',()=>{
+ for(const weapon of ['blade','katana','axe','hammer']){
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon=weapon;p1.facing=0;p1.pitch=.25;p1.x=0;p1.z=0;
+  p2.x=10;p2.z=10;p2.input={};api.superAttack(room,p1);
+  assert.equal(room.projectiles.length,5);
+  assert.ok(new Set(room.projectiles.map(p=>p.dx.toFixed(3))).size>=5);
+  assert.ok(new Set(room.projectiles.map(p=>p.dy.toFixed(3))).size>=2);
+  assert.equal(room.events.find(e=>e.type==='super')?.variant,'fanSlashes');
+ }
 });
