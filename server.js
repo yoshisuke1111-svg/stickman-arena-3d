@@ -11,6 +11,9 @@ const MAX_PLAYERS = 8;
 const MAX_ROOMS = 300;
 const BOUNDS = 12;
 const STEP = 1 / 30;
+// Shared fixed-angle camera basis; CPU and humans always have equal foot speed.
+const CAMERA_YAW=-.62;
+const WALK_SPEED=6.0;
 const COLORS = ['#49e2ed','#ff6e9d','#facb57','#ab8bff','#84ef9d','#ff9a53','#ffe77b','#6ea9ff'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const BLOCKS = [
@@ -61,13 +64,13 @@ function spawnPoint(room,p) {
   }
   p.x=chosen[0]+random(-.45,.45); p.z=chosen[1]+random(-.45,.45); p.y=0;
   p.vy=0; p.kvx=0; p.kvz=0; p.hp=100; p.dead=false; p.respawnIn=0; p.invuln=1.25;
-  p.facing=Math.atan2(-p.x,-p.z); p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
+  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.jumpLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
 }
 function makePlayer(name,ws,isBot=false) {
   return {
     id: String(++playerCounter), name: cleanName(name), ws, isBot, color:COLORS[(playerCounter-1)%COLORS.length],
     weapon:'blade', x:0,y:0,z:0,vy:0,kvx:0,kvz:0,driveX:0,driveZ:0, facing:0,pitch:0,aimMotion:0,hp:100,
-    input:{}, moveAmount:0, grounded:true, dead:false, respawnIn:0, invuln:0,
+    input:{}, moveAmount:0, grounded:true, jumpLatch:false, moveFacing:0, dead:false, respawnIn:0, invuln:0,
     attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0, stagger:0, spin:0,hammerSpin:0,hammerPulse:0,
     hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null
   };
@@ -79,7 +82,7 @@ function createRoom() {
   rooms.set(code,room); return room;
 }
 function packPlayer(p) {
-  return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
+  return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),bf:+p.moveFacing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
     hp:Math.ceil(p.hp),dead:p.dead,k:p.kills,d:p.deaths,s:p.score,bot:p.isBot,a:+p.swing.toFixed(2),hit:+p.hit.toFixed(2),
     m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2)};
 }
@@ -87,7 +90,7 @@ function packState(room) {
   return {t:'state',room:room.code,phase:room.phase,host:room.host,time:Math.max(0,Math.ceil(room.timer)),
     players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',f:+Math.atan2(b.dx,b.dz).toFixed(2),pitch:+Math.asin(clamp(b.dy||0,-1,1)).toFixed(2)})),
     bombs:room.bombs.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),fuse:+b.fuse.toFixed(2),color:b.color})),
-    hazard:room.hazardActive, events:room.events.splice(0)};
+    hazard:false, events:room.events.splice(0)};
 }
 function broadcastState(room) { roomMsg(room,packState(room)); }
 function joinRoom(ws,room,name) {
@@ -141,7 +144,7 @@ function damage(room,target,from,dmg,push=5,origin=from) {
 function attack(room,p) {
   if(p.attackCd>0 || p.dead || p.invuln>.85 || room.phase!=='battle') return;
   const w=WPN[p.weapon]; p.attackCd=w.cd; p.swing=.32;
-  event(room,'attack',{id:p.id,weapon:p.weapon});
+  event(room,'attack',{id:p.id,weapon:p.weapon,f:p.facing,pitch:p.pitch,x:p.x,y:p.y+1.5,z:p.z});
   if(p.weapon==='bomb') {
     if(room.bombs.length>=50)room.bombs.shift();
     const f=p.facing;
@@ -308,20 +311,28 @@ function simulateBot(room,p,dt) {
   if(!enemies.length){p.input={};return;}
   const target=enemies.sort((a,b)=>dist(a,p)-dist(b,p))[0];
   const dx=target.x-p.x,dz=target.z-p.z,d=Math.hypot(dx,dz);
-  const angle=Math.atan2(dx,dz);
-  p.facing=angle; p.pitch=clamp(Math.atan2(target.y-p.y,d),-.7,.7);
-  const strafe=Math.sin(room.elapsed*1.8+Number(p.id)*2)*.45;
-  p.input={w:d>(['blaster','bomb'].includes(p.weapon)?8:2.5),s:d<(['blaster','bomb'].includes(p.weapon)?4:1.1),a:strafe<-.25,d:strafe>.25,
-    jump:Math.random()<.008,attack:d<(['blaster','bomb'].includes(p.weapon)?11:3.6),thrust:d>2.3,skill:d<7&&Math.random()<.03,
-    super:d<7&&Math.random()<.02};
-  // Bots already choose a camera-relative movement vector, where W is toward their target.
+  p.facing=Math.atan2(dx,dz);
+  p.pitch=clamp(Math.atan2(target.y-p.y,d),-.5,.5);
+  // CPU selects keys, then follows exactly the same speed/collision path as players.
+  const melee=!['blaster','bomb'].includes(p.weapon), desired=melee?2.1:7.5;
+  let ax=0,az=0;
+  if(d>desired+.7){ax=dx/Math.max(d,.01);az=dz/Math.max(d,.01);}
+  else if(d<desired-1.1){ax=-dx/Math.max(d,.01);az=-dz/Math.max(d,.01);}
+  const strafe=Math.sin(room.elapsed*1.6+Number(p.id)*1.7)*.28;
+  ax+=dz/Math.max(d,.01)*strafe;az-=dx/Math.max(d,.01)*strafe;
+  const magnitude=Math.hypot(ax,az);
+  if(magnitude>.1){ax/=magnitude;az/=magnitude;}
+  const sin=Math.sin(CAMERA_YAW),cos=Math.cos(CAMERA_YAW);
+  const forward=ax*sin+az*cos,right=-ax*cos+az*sin;
+  p.input={w:forward>.24,s:forward<-.24,a:right<-.24,d:right>.24,
+    jump:Math.random()<.006,attack:d<(melee?3.4:11),
+    skill:d<7&&Math.random()<.026,super:d<8&&Math.random()<.012};
 }
 function tick(room,dt) {
   if(room.phase!=='battle') return;
   room.elapsed+=dt;room.timer-=dt;
   if(room.timer<=0){room.timer=0;room.phase='finished'; event(room,'end');broadcastState(room);return;}
-  const cycle=(room.elapsed%11);
-  room.hazardActive=(cycle>=7.5 && cycle<9);
+  room.hazardActive=false;
   for(const p of room.players.values()) {
     p.attackCd=Math.max(0,p.attackCd-dt); p.skillCd=Math.max(0,p.skillCd-dt);p.superCd=Math.max(0,p.superCd-dt);
     p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.stagger=Math.max(0,p.stagger-dt);p.spin=Math.max(0,p.spin-dt*1.9);p.invuln=Math.max(0,p.invuln-dt);p.aimMotion=Math.max(0,p.aimMotion-dt*1.1);
@@ -336,48 +347,31 @@ function tick(room,dt) {
     if(p.dead){p.respawnIn-=dt;if(p.respawnIn<=0)spawnPoint(room,p);continue;}
     if(p.isBot) simulateBot(room,p,dt);
     const k=p.input||{};
-    let vx=(Number(!!k.d)-Number(!!k.a)),vz=(Number(!!k.w)-Number(!!k.s));
-    const length=Math.hypot(vx,vz)||1;vx/=length;vz/=length;
-    const sin=Math.sin(p.facing),cos=Math.cos(p.facing);
-    // Screen-relative lateral movement: camera faces (sin(facing), 0, cos(facing)).
-    // Camera-right is (-cos(facing), 0, sin(facing)), not the reverse.
+    let vx=Number(!!k.d)-Number(!!k.a),vz=Number(!!k.w)-Number(!!k.s);
+    const len=Math.hypot(vx,vz)||1;vx/=len;vz/=len;
+    const sin=Math.sin(CAMERA_YAW),cos=Math.cos(CAMERA_YAW);
     let dx=-vx*cos+vz*sin,dz=vz*cos+vx*sin;
-    // B controls: holding the mouse button continuously propels the fighter
-    // along the actual 3D weapon direction. WASD on PC never enters k.w/a/s/d.
-    const thrust=!!k.thrust;
-    if(thrust){
-      const accel=p.grounded?24:14;
-      const forward=Math.cos(p.pitch);
-      p.driveX+=Math.sin(p.facing)*forward*accel*dt;
-      p.driveZ+=Math.cos(p.facing)*forward*accel*dt;
-      const limit=p.grounded?8.6:9.5;
-      const magnitude=Math.hypot(p.driveX,p.driveZ);
-      if(magnitude>limit){p.driveX*=limit/magnitude;p.driveZ*=limit/magnitude;}
-      // Looking upward turns a held thrust into a jump, with controlled
-      // airborne steering instead of unlimited upward flight.
-      if(p.pitch>.27&&p.grounded){p.vy=6.7+p.pitch*5.5;p.grounded=false;}
-      else if(!p.grounded)p.vy+=Math.sin(p.pitch)*5.5*dt;
-    }
-    const damp=p.grounded?(thrust?2.1:7.8):(thrust?1.4:1.7);
-    p.driveX*=Math.exp(-damp*dt);p.driveZ*=Math.exp(-damp*dt);
-    p.moveAmount=Math.max(Math.min(1,Math.hypot(p.driveX,p.driveZ)/6),
-      (Number(!!k.w)+Number(!!k.s)+Number(!!k.a)+Number(!!k.d))?1:0);
+    p.moveAmount=(!!k.w||!!k.a||!!k.s||!!k.d)?1:0;
+    if(p.moveAmount)p.moveFacing=Math.atan2(dx,dz);
+    // Legacy click-thrust would make CPU move faster than humans: disabled.
+    p.driveX=0;p.driveZ=0;
     if(p.dashTime>0){
       p.dashTime=Math.max(0,p.dashTime-dt);dx=Math.sin(p.facing);dz=Math.cos(p.facing);
       for(const q of room.players.values()) if(q.id!==p.id&&!p.dashHits.has(q.id)&&!q.dead&&dist(p,q)<1.5 && Math.abs(p.y-q.y)<2) {
         if(damage(room,q,p,22,10))p.dashHits.add(q.id);
       }
     }
-    const speed=p.dashTime>0?19:5.8;
+    const speed=p.dashTime>0?17:WALK_SPEED;
     // Substeps prevent fast knockback and dashes from tunnelling into cover.
-    const moveX=(dx*speed+p.driveX+p.kvx)*dt,moveZ=(dz*speed+p.driveZ+p.kvz)*dt;
+    const moveX=(dx*speed+p.kvx)*dt,moveZ=(dz*speed+p.kvz)*dt;
     const subdivisions=Math.max(1,Math.ceil(Math.hypot(moveX,moveZ)/.22));
     for(let i=0;i<subdivisions;i++){
       p.x+=moveX/subdivisions;p.z+=moveZ/subdivisions;resolveBlocks(p);
     }
     p.kvx*=Math.exp(-5*dt);p.kvz*=Math.exp(-5*dt);
     const overFloor = Math.abs(p.x)<=BOUNDS && Math.abs(p.z)<=BOUNDS;
-    if(k.jump&&p.grounded){p.vy=8.5;p.grounded=false;}
+    if(k.jump&&p.grounded&&!p.jumpLatch){p.vy=9.2;p.grounded=false;}
+    p.jumpLatch=!!k.jump;
     const oldY=p.y;
     p.vy-=22*dt;p.y+=p.vy*dt;
     let floor=overFloor?0:-Infinity;
@@ -390,12 +384,9 @@ function tick(room,dt) {
     if(p.y<-9){die(room,p,null);continue;}
     const melee=!['blaster','bomb'].includes(p.weapon);
     const near=melee&&[...room.players.values()].some(q=>q.id!==p.id&&!q.dead&&dist(p,q)<WPN[p.weapon].range+.5);
-    if((!melee&&(k.attack||thrust))||(melee&&near&&(p.moveAmount>.2||p.aimMotion>.15||p.dashTime>0)))attack(room,p);
+    if((!melee&&k.attack)||(melee&&(k.attack||(near&&(p.moveAmount>.2||p.aimMotion>.15||p.dashTime>0)))))attack(room,p);
     if(k.skill)skill(room,p);
     if(k.super)superAttack(room,p);
-    if(room.hazardActive && p.y<1.5 && Math.hypot(p.x,p.z)<2.6 && p.hazardNext<=room.elapsed){
-      p.hazardNext=room.elapsed+.75;damage(room,p,null,12,5);
-    }
     if(p.dashTime===0)p.dashHits.clear();
   }
   for(let i=room.projectiles.length-1;i>=0;i--){
@@ -454,7 +445,7 @@ wss.on('connection',ws=>{
       if(m.t==='input'){
         const k=m.k;
         if(!k||typeof k!=='object'||Array.isArray(k))return;
-        p.input={};for(const key of ['w','s','a','d','jump','attack','thrust','skill','super'])p.input[key]=k[key]===true;
+        p.input={};for(const key of ['w','s','a','d','jump','attack','skill','super'])p.input[key]=k[key]===true;
         if(Number.isFinite(m.yaw)){
           const aimed=Math.atan2(Math.sin(m.yaw),Math.cos(m.yaw));
           p.aimMotion=Math.min(1.3,p.aimMotion+Math.abs(Math.atan2(Math.sin(aimed-p.facing),Math.cos(aimed-p.facing)))*2.5);
