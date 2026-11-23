@@ -10,7 +10,7 @@ function engine() {
   let code=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
   code=code.replace(/^import .*;\n/gm,'').replace('const BASE = path.dirname(fileURLToPath(import.meta.url));',"const BASE = '/unused';");
   code=code.replace(/^server.listen\(PORT,.*\);\n/m,'');
-  code+='\n globalThis.__test = { createRoom, makePlayer, joinRoom, start, tick, attack, damage, die, spawnPoint, packState, rooms, WPN, safeWeapon, detonate, advanceBombs };';
+  code+='\n globalThis.__test = { createRoom, makePlayer, joinRoom, start, tick, attack, damage, die, spawnPoint, packState, rooms, WPN, safeWeapon, detonate, advanceBombs, skill, superAttack, wave };';
   const context={
     http:{createServer:()=>({listen(){},close(callback){callback?.();}})},fs,path,crypto,
     WebSocketServer:class {on(){} close(){}},WebSocket:{OPEN:1},
@@ -136,4 +136,62 @@ test('WASD lateral movement follows the camera: A left and D right on screen',()
   p1.x=0;p1.z=0;p1.input={a:true};
   api.tick(room,1/30);
   assert.ok(p1.z<0,'when looking toward +X, screen-left points toward -Z');
+});
+
+test('katana launches a luminous dragon projectile and hits at range',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon='katana';p1.x=0;p1.z=0;p1.y=0;p1.facing=0;p1.invuln=0;p1.input={};
+  p2.x=0;p2.z=6;p2.y=0;p2.invuln=0;p2.input={};
+  api.skill(room,p1);
+  assert.ok(room.projectiles.some(w=>w.kind==='dragon'));
+  assert.equal(p1.skillCd,6);
+  assert.equal(room.events.find(e=>e.type==='skillcast')?.variant,'dragon');
+  for(let i=0;i<18;i++)api.tick(room,1/30);
+  assert.ok(p2.hp<100,'dragon projectile deals damage');
+});
+test('hammer shockwave launches enemies and causes stagger',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon='hammer';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;
+  p2.x=0;p2.z=2.8;p2.y=0;p2.hp=100;p2.invuln=0;
+  api.skill(room,p1);
+  assert.ok(p2.hp<100);
+  assert.ok(p2.kvz>10,'strong knockback');
+  assert.ok(p2.stagger>.3);
+  assert.ok(room.events.some(e=>e.type==='impact'&&e.kind==='hammerShock'));
+});
+test('axe Skill has random cleave, whirlwind and wave variants',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon='axe';p1.x=0;p1.z=0;p1.invuln=0;
+  p2.x=10;p2.z=10;p2.invuln=0;
+  const seen=new Set();
+  for(let i=0;i<45;i++){
+    p1.skillCd=0;api.skill(room,p1);
+    for(const e of room.events)if(e.type==='skillcast')seen.add(e.variant);
+    room.events.length=0;
+  }
+  assert.ok(seen.size>=2);
+  for(const k of seen)assert.ok(['cleave','whirl','wave'].includes(k));
+});
+test('melee fighter automatically strikes when moving into range',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.weapon='blade';p1.x=0;p1.z=0;p1.y=0;p1.invuln=0;p1.facing=0;p1.input={w:true};
+  p2.x=0;p2.z=2;p2.y=0;p2.invuln=0;p2.input={};
+  api.tick(room,1/30);
+  assert.ok(p2.hp<100);
+  assert.ok(room.events.some(e=>e.type==='attack'));
+});
+test('falling fighters stand on elevated blocks instead of sinking into them',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.x=-4.4;p1.z=-1.6;p1.y=3;p1.vy=-2;p1.grounded=false;p1.input={};
+  p2.x=10;p2.z=10;p2.input={};
+  for(let i=0;i<20;i++)api.tick(room,1/30);
+  assert.ok(Math.abs(p1.y-2.15)<.02);
+  assert.equal(p1.grounded,true);
+});
+test('high knockback stays outside solid cover rather than tunneling through it',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.x=-7;p1.z=-1.6;p1.y=0;p1.grounded=true;p1.kvx=28;p1.kvz=0;p1.input={};
+  p2.x=10;p2.z=10;p2.input={};
+  for(let i=0;i<40;i++)api.tick(room,1/30);
+  assert.ok(p1.x<=-5.75-.43,`x=${p1.x}`);
 });
