@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="theme-color" content="#090e1b" />
+  <title>STICK ARENA 3D - Online Battle | 6 Weapons</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="world"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div id="flash" aria-hidden="true"></div>
+
+<header id="topbar">
+  <div class="mini-brand"><span class="logo">✳</span><span>STICK <b>ARENA</b> <i>3D</i></span></div>
+  <div id="battleHeader" class="hidden"><span id="matchClock">03:00</span><span class="tiny">FREE FOR ALL</span></div>
+  <div class="header-right"><span id="netStatus" class="connection"><span class="dot"></span>接続中</span><button id="soundToggle" class="iconButton" title="サウンド切り替え">♪</button></div>
+</header>
+
+<main id="landing" class="landing">
+  <div class="eyebrow"><span class="pulse"></span> MULTIPLAYER COMBAT / BROWSER EDITION</div>
+  <h1>STICKMAN<br/><span>ARENA <em>3D</em></span></h1>
+  <p>ぶつかれ、吹き飛ばせ、最後まで戦え。<br/>友達と同じ部屋に集まる、3D棒人間バトル。</p>
+  <div class="entry-box">
+    <label for="nameInput">PLAYER NAME</label>
+    <input id="nameInput" maxlength="14" placeholder="名前を入力" value="プレイヤー" autocomplete="off" />
+    <button id="createBtn" class="primary"><span>＋</span> 新しい部屋を作る <span>→</span></button>
+    <div class="or"><span>OR JOIN YOUR FRIEND</span></div>
+    <div class="join-row"><input id="codeInput" maxlength="5" placeholder="部屋コード (5文字)" autocomplete="off" autocapitalize="characters" /><button id="joinBtn">参加 →</button></div>
+    <div id="entryError" class="error hidden" role="alert"></div>
+  </div>
+  <div class="landing-bottom">⚔ ブレード / ハンマー / ブラスター / 刀 / 爆弾 / 斧　　•　　最大8人　　•　　CPU練習あり</div>
+</main>
+
+<section id="roomPanel" class="room-panel hidden" aria-label="ルームの設定">
+  <div class="panel-top"><span class="eyebrow">PRIVATE BATTLE ROOM</span><button id="exitRoomBtn" class="subtle">退出 ✕</button></div>
+  <h2 id="panelTitle">対戦の準備</h2>
+  <p id="panelSubtitle">友達を誘ってバトルを開始しよう。</p>
+  <div class="codebar"><div><div class="muted">ROOM CODE</div><div id="bigCode" class="code">-----</div></div><button id="copyBtn" class="copy">招待URLをコピー <span>↗</span></button></div>
+  <h3>武器を選択</h3>
+  <div class="weapons" id="weaponChoices">
+    <button data-weapon="blade" class="weapon active"><span class="weapon-ico">⚔</span><strong>ブレード</strong><small>素早く斬り込む</small></button>
+    <button data-weapon="hammer" class="weapon"><span class="weapon-ico">🔨</span><strong>ハンマー</strong><small>一撃で吹き飛ばす</small></button>
+    <button data-weapon="blaster" class="weapon"><span class="weapon-ico">◉</span><strong>ブラスター</strong><small>遠距離射撃</small></button>
+    <button data-weapon="katana" class="weapon"><span class="weapon-ico">⚔</span><strong>刀</strong><small>高速連撃・長い間合い</small></button>
+    <button data-weapon="bomb" class="weapon"><span class="weapon-ico">💣</span><strong>爆弾</strong><small>投擲・時間差で範囲爆発</small></button>
+    <button data-weapon="axe" class="weapon"><span class="weapon-ico">🪓</span><strong>斧</strong><small>強烈な一撃・高ノックバック</small></button>
+  </div>
+  <h3>参加者 <span id="countTag">0 / 8</span></h3>
+  <div id="playerList" class="players"></div>
+  <div class="room-actions"><button id="startBtn" class="primary">バトル開始 →</button><button id="addBotBtn" class="secondary">＋ CPU追加</button><button id="removeBotBtn" class="subtle">CPU削除</button></div>
+  <p class="hint" id="roomHint">部屋主が開始できます。ひとりでもCPU相手に練習できます。</p>
+</section>
+
+<div id="hud" class="hud hidden">
+  <div class="health-panel"><div class="hp-row"><span id="myName">PLAYER</span><b id="hpText">100 HP</b></div><div class="hp-track"><div id="hpFill"></div></div><div id="weaponName" class="muted">BLADE</div></div>
+  <div class="score-panel"><div class="score-title"><span>LEADERBOARD</span><span id="hudRoomCode">ROOM</span></div><div id="leaderboard"></div></div>
+  <div class="bottom-help"><span><kbd>W A S D</kbd> 移動</span><span><kbd>SPACE</kbd> ジャンプ</span><span><kbd>左クリック</kbd> 攻撃</span><span><kbd>E</kbd> ダッシュ</span><span><kbd>Q</kbd> 衝撃波</span><span><kbd>1 ～ 6</kbd> 武器切替</span></div>
+  <div id="battleWeaponBar" class="battle-weapon-bar" aria-label="武器を変更"><button data-weapon="blade" title="1: ブレード">1 剣</button><button data-weapon="hammer" title="2: ハンマー">2 鎚</button><button data-weapon="blaster" title="3: ブラスター">3 銃</button><button data-weapon="katana" title="4: 刀">4 刀</button><button data-weapon="bomb" title="5: 爆弾">5 爆</button><button data-weapon="axe" title="6: 斧">6 斧</button></div>
+  <div class="ability-strip"><div class="ability"><div class="ability-key">E</div><div><strong>ダッシュ</strong><span id="dashCd">READY</span></div></div><div class="ability"><div class="ability-key ultimate">Q</div><div><strong>衝撃波</strong><span id="superCd">READY</span></div></div></div>
+  <div id="killFeed" class="feed"></div>
+  <div id="message" class="message hidden"></div>
+  <div id="mobileControls" class="mobile-controls">
+    <div id="joystick" class="joystick"><div id="stick" class="stick"></div></div>
+    <div class="mobile-actions"><button class="touchbtn jump" data-touch="jump">JUMP</button><button class="touchbtn skill" data-touch="skill">DASH</button><button class="touchbtn ultimate" data-touch="super">SUPER</button><button class="touchbtn attack" data-touch="attack">ATTACK</button></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden" role="status"></div>
+<footer><span>ORIGINAL 3D ARENA PROTOTYPE</span><span>CREATED BY 鈾</span></footer>
+<script type="module" src="/game.js"></script>
+</body>
+</html>
