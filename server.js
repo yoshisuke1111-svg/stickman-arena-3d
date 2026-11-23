@@ -61,14 +61,14 @@ function spawnPoint(room,p) {
   }
   p.x=chosen[0]+random(-.45,.45); p.z=chosen[1]+random(-.45,.45); p.y=0;
   p.vy=0; p.kvx=0; p.kvz=0; p.hp=100; p.dead=false; p.respawnIn=0; p.invuln=1.25;
-  p.facing=Math.atan2(-p.x,-p.z); p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
+  p.facing=Math.atan2(-p.x,-p.z); p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0;
 }
 function makePlayer(name,ws,isBot=false) {
   return {
     id: String(++playerCounter), name: cleanName(name), ws, isBot, color:COLORS[(playerCounter-1)%COLORS.length],
-    weapon:'blade', x:0,y:0,z:0,vy:0,kvx:0,kvz:0, facing:0, hp:100,
+    weapon:'blade', x:0,y:0,z:0,vy:0,kvx:0,kvz:0,driveX:0,driveZ:0, facing:0,pitch:0,aimMotion:0,hp:100,
     input:{}, moveAmount:0, grounded:true, dead:false, respawnIn:0, invuln:0,
-    attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0, stagger:0, spin:0,
+    attackCd:0, skillCd:0, superCd:0, swing:0, dashTime:0, dashHits:new Set(), hit:0, stagger:0, spin:0,hammerSpin:0,hammerPulse:0,
     hazardNext:0, kills:0, deaths:0, score:0, botDecision:0, botTarget:null
   };
 }
@@ -79,13 +79,13 @@ function createRoom() {
   rooms.set(code,room); return room;
 }
 function packPlayer(p) {
-  return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),
+  return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
     hp:Math.ceil(p.hp),dead:p.dead,k:p.kills,d:p.deaths,s:p.score,bot:p.isBot,a:+p.swing.toFixed(2),hit:+p.hit.toFixed(2),
     m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2)};
 }
 function packState(room) {
   return {t:'state',room:room.code,phase:room.phase,host:room.host,time:Math.max(0,Math.ceil(room.timer)),
-    players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',f:+Math.atan2(b.dx,b.dz).toFixed(2)})),
+    players:[...room.players.values()].map(packPlayer),shots:room.projectiles.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),color:b.color,kind:b.kind||'blaster',f:+Math.atan2(b.dx,b.dz).toFixed(2),pitch:+Math.asin(clamp(b.dy||0,-1,1)).toFixed(2)})),
     bombs:room.bombs.map(b=>({id:b.id,x:+b.x.toFixed(2),y:+b.y.toFixed(2),z:+b.z.toFixed(2),fuse:+b.fuse.toFixed(2),color:b.color})),
     hazard:room.hazardActive, events:room.events.splice(0)};
 }
@@ -158,6 +158,9 @@ function attack(room,p) {
       if(q.id===p.id || q.dead || Math.abs(p.y-q.y)>2)continue;
       const d=dist(p,q);
       if(d>w.range)continue;
+      // A sword aimed toward the sky must not hit an enemy straight ahead.
+      const vertical=Math.atan2(q.y-p.y-.15,Math.max(.05,d));
+      if(Math.abs(vertical-p.pitch)>.68)continue;
       const a=Math.atan2(q.x-p.x,q.z-p.z);
       const diff=Math.atan2(Math.sin(a-p.facing),Math.cos(a-p.facing));
       if(Math.abs(diff)<=w.arc/2 && !isBlocked(p,q)) {
@@ -214,7 +217,10 @@ function wave(room,p,kind,offset=0,opts={}) {
   const speed=opts.speed??(kind==='dragon'?18:kind==='axeWave'?15:16);
   room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,kind,
     x:p.x+Math.sin(angle)*1.05,y:p.y+(opts.height??1.35),z:p.z+Math.cos(angle)*1.05,
-    dx:Math.sin(angle),dz:Math.cos(angle),speed,life:opts.life??1.2,
+    dx:Math.sin(angle)*Math.cos(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
+    dy:Math.sin(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
+    dz:Math.cos(angle)*Math.cos(clamp(p.pitch+(opts.pitchOffset??0),-1.1,1.1)),
+    speed,life:opts.life??1.2,
     radius:opts.radius??.95,damage:opts.damage??24,push:opts.push??11,
     pierce:opts.pierce??false,hitIds:new Set(),color:opts.color||p.color});
 }
@@ -232,11 +238,11 @@ function skill(room,p) {
   let variant='';
   switch(p.weapon){
     case 'blade':
-      variant='swordArc';wave(room,p,'slash',0,{radius:1.1,damage:25,push:8,life:.78,speed:16});break;
+      variant='swordCharge';p.dashTime=.43;p.dashHits=new Set();p.vy=Math.max(p.vy,Math.max(0,p.pitch)*5.5);break;
     case 'katana':
       variant='dragon';wave(room,p,'dragon',0,{radius:1.15,damage:36,push:13,life:1.6,speed:20,pierce:true,color:'#5ae6ff'});break;
     case 'hammer':
-      variant='hammerShock';areaImpact(room,p,4.0,31,19,'hammerShock');p.vy=Math.max(p.vy,3.5);break;
+      variant='hammerSpin';p.hammerSpin=1.25;p.hammerPulse=0;break;
     case 'axe': {
       variant=AXE_SKILLS[Math.floor(Math.random()*AXE_SKILLS.length)];
       if(variant==='whirl')areaImpact(room,p,3.65,27,13,'axeWhirl');
@@ -266,15 +272,15 @@ function superAttack(room,p) {
   let variant='';
   switch(p.weapon){
     case 'blade':
-      variant='swordStorm';areaImpact(room,p,4.3,38,15,'swordStorm');
-      for(const a of [-.3,0,.3])wave(room,p,'slash',a,{damage:24,push:8,life:.85});break;
     case 'katana':
-      variant='dragonStorm';for(const a of [-.3,0,.3])wave(room,p,'dragon',a,{damage:31,push:12,radius:1.1,life:1.65,pierce:true,color:'#65edff'});break;
     case 'axe':
-      variant='axeCyclone';areaImpact(room,p,5,48,21,'axeCyclone');
-      for(const a of [-.5,0,.5])wave(room,p,'axeWave',a,{damage:32,push:14,life:1.0});break;
     case 'hammer':
-      variant='quake';areaImpact(room,p,5.8,50,24,'quake');p.vy=Math.max(p.vy,4.5);break;
+      // The supplied four weapons share a forward fan of slashes in the footage.
+      // In 3D, five slightly separated aim elevations create a broader fan.
+      variant='fanSlashes';
+      for(const [i,a] of [-.38,-.19,0,.19,.38].entries())
+        wave(room,p,'slash',a,{damage:25,push:10,life:1.13,speed:18,radius:.85,pitchOffset:[-.10,.05,0,.05,-.10][i],color:'#a0ecff'});
+      break;
     case 'blaster':
       variant='laserFan';for(const a of [-.36,-.18,0,.18,.36])wave(room,p,'blaster',a,{damage:20,push:7,radius:.8,speed:26,life:1.4});break;
     case 'bomb':
@@ -303,10 +309,10 @@ function simulateBot(room,p,dt) {
   const target=enemies.sort((a,b)=>dist(a,p)-dist(b,p))[0];
   const dx=target.x-p.x,dz=target.z-p.z,d=Math.hypot(dx,dz);
   const angle=Math.atan2(dx,dz);
-  p.facing=angle;
+  p.facing=angle; p.pitch=clamp(Math.atan2(target.y-p.y,d),-.7,.7);
   const strafe=Math.sin(room.elapsed*1.8+Number(p.id)*2)*.45;
   p.input={w:d>(['blaster','bomb'].includes(p.weapon)?8:2.5),s:d<(['blaster','bomb'].includes(p.weapon)?4:1.1),a:strafe<-.25,d:strafe>.25,
-    jump:Math.random()<.008,attack:d<(['blaster','bomb'].includes(p.weapon)?11:3.6),skill:d<7&&Math.random()<.03,
+    jump:Math.random()<.008,attack:d<(['blaster','bomb'].includes(p.weapon)?11:3.6),thrust:d>2.3,skill:d<7&&Math.random()<.03,
     super:d<7&&Math.random()<.02};
   // Bots already choose a camera-relative movement vector, where W is toward their target.
 }
@@ -318,7 +324,15 @@ function tick(room,dt) {
   room.hazardActive=(cycle>=7.5 && cycle<9);
   for(const p of room.players.values()) {
     p.attackCd=Math.max(0,p.attackCd-dt); p.skillCd=Math.max(0,p.skillCd-dt);p.superCd=Math.max(0,p.superCd-dt);
-    p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.stagger=Math.max(0,p.stagger-dt);p.spin=Math.max(0,p.spin-dt*1.9);p.invuln=Math.max(0,p.invuln-dt);
+    p.swing=Math.max(0,p.swing-dt);p.hit=Math.max(0,p.hit-dt);p.stagger=Math.max(0,p.stagger-dt);p.spin=Math.max(0,p.spin-dt*1.9);p.invuln=Math.max(0,p.invuln-dt);p.aimMotion=Math.max(0,p.aimMotion-dt*1.1);
+    if(p.hammerSpin>0){
+      p.hammerSpin=Math.max(0,p.hammerSpin-dt);p.hammerPulse-=dt;
+      if(p.hammerPulse<=0){
+        p.hammerPulse=.27;
+        for(const q of room.players.values())if(q.id!==p.id&&!q.dead&&Math.abs(p.y-q.y)<2.4&&dist(p,q)<2.9&&!isBlocked(p,q))
+          damage(room,q,p,17,10);
+      }
+    }
     if(p.dead){p.respawnIn-=dt;if(p.respawnIn<=0)spawnPoint(room,p);continue;}
     if(p.isBot) simulateBot(room,p,dt);
     const k=p.input||{};
@@ -328,7 +342,26 @@ function tick(room,dt) {
     // Screen-relative lateral movement: camera faces (sin(facing), 0, cos(facing)).
     // Camera-right is (-cos(facing), 0, sin(facing)), not the reverse.
     let dx=-vx*cos+vz*sin,dz=vz*cos+vx*sin;
-    p.moveAmount=(Number(!!k.w)+Number(!!k.s)+Number(!!k.a)+Number(!!k.d))?1:0;
+    // B controls: holding the mouse button continuously propels the fighter
+    // along the actual 3D weapon direction. WASD on PC never enters k.w/a/s/d.
+    const thrust=!!k.thrust;
+    if(thrust){
+      const accel=p.grounded?24:14;
+      const forward=Math.cos(p.pitch);
+      p.driveX+=Math.sin(p.facing)*forward*accel*dt;
+      p.driveZ+=Math.cos(p.facing)*forward*accel*dt;
+      const limit=p.grounded?8.6:9.5;
+      const magnitude=Math.hypot(p.driveX,p.driveZ);
+      if(magnitude>limit){p.driveX*=limit/magnitude;p.driveZ*=limit/magnitude;}
+      // Looking upward turns a held thrust into a jump, with controlled
+      // airborne steering instead of unlimited upward flight.
+      if(p.pitch>.27&&p.grounded){p.vy=6.7+p.pitch*5.5;p.grounded=false;}
+      else if(!p.grounded)p.vy+=Math.sin(p.pitch)*5.5*dt;
+    }
+    const damp=p.grounded?(thrust?2.1:7.8):(thrust?1.4:1.7);
+    p.driveX*=Math.exp(-damp*dt);p.driveZ*=Math.exp(-damp*dt);
+    p.moveAmount=Math.max(Math.min(1,Math.hypot(p.driveX,p.driveZ)/6),
+      (Number(!!k.w)+Number(!!k.s)+Number(!!k.a)+Number(!!k.d))?1:0);
     if(p.dashTime>0){
       p.dashTime=Math.max(0,p.dashTime-dt);dx=Math.sin(p.facing);dz=Math.cos(p.facing);
       for(const q of room.players.values()) if(q.id!==p.id&&!p.dashHits.has(q.id)&&!q.dead&&dist(p,q)<1.5 && Math.abs(p.y-q.y)<2) {
@@ -337,7 +370,7 @@ function tick(room,dt) {
     }
     const speed=p.dashTime>0?19:5.8;
     // Substeps prevent fast knockback and dashes from tunnelling into cover.
-    const moveX=(dx*speed+p.kvx)*dt,moveZ=(dz*speed+p.kvz)*dt;
+    const moveX=(dx*speed+p.driveX+p.kvx)*dt,moveZ=(dz*speed+p.driveZ+p.kvz)*dt;
     const subdivisions=Math.max(1,Math.ceil(Math.hypot(moveX,moveZ)/.22));
     for(let i=0;i<subdivisions;i++){
       p.x+=moveX/subdivisions;p.z+=moveZ/subdivisions;resolveBlocks(p);
@@ -357,7 +390,7 @@ function tick(room,dt) {
     if(p.y<-9){die(room,p,null);continue;}
     const melee=!['blaster','bomb'].includes(p.weapon);
     const near=melee&&[...room.players.values()].some(q=>q.id!==p.id&&!q.dead&&dist(p,q)<WPN[p.weapon].range+.5);
-    if(k.attack||(melee&&p.moveAmount>0&&near))attack(room,p);
+    if((!melee&&(k.attack||thrust))||(melee&&near&&(p.moveAmount>.2||p.aimMotion>.15||p.dashTime>0)))attack(room,p);
     if(k.skill)skill(room,p);
     if(k.super)superAttack(room,p);
     if(room.hazardActive && p.y<1.5 && Math.hypot(p.x,p.z)<2.6 && p.hazardNext<=room.elapsed){
@@ -368,7 +401,7 @@ function tick(room,dt) {
   for(let i=room.projectiles.length-1;i>=0;i--){
     const b=room.projectiles[i];
     const speed=b.speed??19;
-    b.x+=b.dx*speed*dt;b.z+=b.dz*speed*dt;b.life-=dt;
+    b.x+=b.dx*speed*dt;b.z+=b.dz*speed*dt;b.y+=(b.dy||0)*speed*dt;b.life-=dt;
     const radius=b.radius??.65;
     let remove=b.life<=0||Math.abs(b.x)>BOUNDS+2||Math.abs(b.z)>BOUNDS+2||hitBlock(b.x,b.z,b.y);
     if(!remove){
@@ -421,8 +454,13 @@ wss.on('connection',ws=>{
       if(m.t==='input'){
         const k=m.k;
         if(!k||typeof k!=='object'||Array.isArray(k))return;
-        p.input={};for(const key of ['w','s','a','d','jump','attack','skill','super'])p.input[key]=k[key]===true;
-        if(Number.isFinite(m.yaw))p.facing=Math.atan2(Math.sin(m.yaw),Math.cos(m.yaw));
+        p.input={};for(const key of ['w','s','a','d','jump','attack','thrust','skill','super'])p.input[key]=k[key]===true;
+        if(Number.isFinite(m.yaw)){
+          const aimed=Math.atan2(Math.sin(m.yaw),Math.cos(m.yaw));
+          p.aimMotion=Math.min(1.3,p.aimMotion+Math.abs(Math.atan2(Math.sin(aimed-p.facing),Math.cos(aimed-p.facing)))*2.5);
+          p.facing=aimed;
+        }
+        if(Number.isFinite(m.pitch)){const v=clamp(m.pitch,-1.10,1.20);p.aimMotion=Math.min(1.3,p.aimMotion+Math.abs(v-p.pitch));p.pitch=v;}
       } else if(m.t==='weapon')p.weapon=safeWeapon(m.weapon);
       else if(m.t==='start'&&room.host===p.id){start(room);}
       else if(m.t==='bot'&&room.host===p.id && room.players.size<MAX_PLAYERS){
