@@ -34,7 +34,7 @@ npm start
 ## Renderに公開する方法
 
 1. 新しくGitHubリポジトリを作る（既存の人狼ゲームとは別のリポジトリが無難）。
-2. ZIP内の `stick-arena-3d` フォルダの中身をリポジトリのルートにアップロードする（`package.json` が最上位になるように）。
+2. このリポジトリ（`yoshisuke1111-svg/stickman-arena-3d`）をRenderで選択する。ソースコードの再アップロードは不要。
 3. [Render](https://render.com/) の **New → Web Service** でリポジトリを接続する。
 4. Environment を `Node`、Build Command を `npm install`、Start Command を `npm start` にする。`render.yaml` によるBlueprint作成も可能。
 5. デプロイが成功したら表示された `https://...onrender.com` のURLを開く。
@@ -67,7 +67,6 @@ stick-arena-3d/
 ├─ package.json          Node依存（ws / three）
 ├─ server.js             HTTP + WebSocketサーバー、物理・対戦判定
 ├─ render.yaml           Render用の設定例
-├─ Dockerfile            Dockerデプロイ用
 ├─ public/
 │  ├─ index.html         UI
 │  ├─ style.css          PC・スマホ表示
@@ -85,12 +84,10 @@ stick-arena-3d/
 
 制作者表記：鈾
 
-## このGitHubリポジトリについて
+## 現在の公開状態（2026-11-23）
 
-このリポジトリには **PCブラウザ用の6武器オンライン対戦試作版**を登録済みです。
+- GitHub: このリポジトリの `main` に **ゲーム本体の通常のソースファイルを登録済み**。
+- CI: `.github/workflows/restore-and-test.yml` が `npm test` で9件の対戦テストを確認します。
+- Render: **新規Web Serviceの作成待ち**。Web公開URLはまだありません。
+- 公開設定: runtime Node / build `npm install` / start `npm start` / health `/health` / branch `main`。無料プランではスリープすることがあります。
 
-- 画面は `public/index.html` にあります。
-- 対戦サーバー、3D描画、スタイルは `source-parts/` に検証用バックアップとして圧縮格納しています。初回 `npm start` 時に `unpack.mjs` がSHA-256を照合して自動展開するため、ZIPのアップロード操作は不要です。
-- `npm test` では元の9件の対戦ロジックテストを復元して実行します。
-- GitHub Actionsの「Restore and test six-weapon source」が成功すれば、展開後のソースも通常のGitHubファイルとして自動コミットされます。
-- Renderで公開する場合はこのリポジトリの `main` を **Web Service / Node / npm install / npm start** で接続します。これからデプロイする段階で、まだ公開URLは確定していません。
