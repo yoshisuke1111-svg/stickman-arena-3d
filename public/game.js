@@ -386,7 +386,6 @@ function animatePreview(t){previewGroup.visible=!joined;
 let socket, selfId=null,roomCode='',phase='home',joined=false,isHost=false,latestState=null,localWeapon='blade',reconnectTimer=null;
 let previousHp=100, toastTimer=null,soundEnabled=false,audioCtx=null;
 let keys={w:false,s:false,a:false,d:false,jump:false,attack:false,thrust:false,skill:false,super:false};
-const viewKeys={w:false,s:false,a:false,d:false};
 const touch={w:false,s:false,a:false,d:false,jump:false,attack:false,thrust:false,skill:false,super:false};
 const weaponNames={blade:'BLADE',hammer:'HAMMER',blaster:'BLASTER',katana:'KATANA',bomb:'BOMB',axe:'AXE'};
 const weaponHotkeys=['blade','hammer','blaster','katana','bomb','axe'];
@@ -525,48 +524,40 @@ function chooseWeapon(weapon){if(!weaponNames[weapon])return;localWeapon=weapon;
   if(joined)send({t:'weapon',weapon});
 }
 for(const btn of document.querySelectorAll('[data-weapon]'))btn.onclick=()=>chooseWeapon(btn.dataset.weapon);
-const keyMap={Space:'jump',KeyE:'skill',KeyQ:'super'};
-const orbitMap={KeyW:'w',KeyS:'s',KeyA:'a',KeyD:'d',ArrowUp:'w',ArrowDown:'s',ArrowLeft:'a',ArrowRight:'d'};
+const keyMap={KeyW:'w',KeyA:'a',KeyS:'s',KeyD:'d',ArrowUp:'w',ArrowLeft:'a',ArrowDown:'s',ArrowRight:'d',Space:'jump',KeyE:'skill',KeyQ:'super'};
 window.addEventListener('keydown',e=>{
   if(e.target instanceof HTMLInputElement||!joined||phase!=='battle')return;
-  const view=orbitMap[e.code];if(view){viewKeys[view]=true;e.preventDefault();}
   const action=keyMap[e.code];if(action){keys[action]=true;e.preventDefault();}
-  if(e.code==='KeyR'){aimYaw=camYaw;aimPitch=0;toast('武器の向きを視点に合わせた');}
+  if(e.code==='KeyR'){aimYaw=FIXED_CAM_YAW;aimPitch=0;toast('武器の方向をリセット');}
   if(/^Digit[1-6]$/.test(e.code))chooseWeapon(weaponHotkeys[Number(e.code.slice(-1))-1]);
 });
-window.addEventListener('keyup',e=>{
-  const view=orbitMap[e.code];if(view)viewKeys[view]=false;
-  const action=keyMap[e.code];if(action)keys[action]=false;
-});
-window.addEventListener('blur',()=>{
-  for(const k in keys)keys[k]=false;
-  for(const k in viewKeys)viewKeys[k]=false;
-  for(const k in touch)touch[k]=false;
-});
-const updateAim=(mx,my)=>{
-  aimYaw-=mx*.0043;
-  aimPitch=THREE.MathUtils.clamp(aimPitch-my*.0043,-1.10,1.20);
+window.addEventListener('keyup',e=>{const action=keyMap[e.code];if(action)keys[action]=false;});
+window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;for(const k in touch)touch[k]=false;});
+let aimCursor={x:innerWidth*.5,y:innerHeight*.48,active:false};
+const updateAimFromCursor=()=>{
+  const model=playerModels.get(selfId);
+  if(!model||!aimCursor.active)return;
+  const center=new THREE.Vector3(model.display.x,model.display.y+1.4,model.display.z).project(camera);
+  const px=(center.x*.5+.5)*innerWidth,py=(.5-center.y*.5)*innerHeight;
+  const x=aimCursor.x-px,y=py-aimCursor.y;
+  if(Math.hypot(x,y)<24)return;
+  aimYaw=Math.atan2(-x*Math.cos(FIXED_CAM_YAW)+y*Math.sin(FIXED_CAM_YAW),
+    x*Math.sin(FIXED_CAM_YAW)+y*Math.cos(FIXED_CAM_YAW));
+  aimPitch=THREE.MathUtils.clamp((y-20)*.0015,-.58,.75);
 };
+renderer.domElement.addEventListener('pointermove',e=>{
+  if(!joined||phase!=='battle'||e.pointerType==='touch')return;
+  aimCursor={x:e.clientX,y:e.clientY,active:true};
+});
 renderer.domElement.addEventListener('pointerdown',e=>{
   if(!joined||phase!=='battle')return;
-  if(e.pointerType==='mouse'&&e.button===0){
-    keys.thrust=true;
-    try{renderer.domElement.requestPointerLock?.()?.catch?.(()=>{});}catch{}
-  }
+  if(e.button===0){keys.attack=true;aimCursor={x:e.clientX,y:e.clientY,active:true};}
 });
-renderer.domElement.addEventListener('pointermove',e=>{
-  if(joined&&phase==='battle'&&document.pointerLockElement!==renderer.domElement)
-    updateAim(e.movementX||0,e.movementY||0);
-});
-renderer.domElement.addEventListener('pointerup',e=>{if(e.button===0)keys.thrust=false;});
-renderer.domElement.addEventListener('pointercancel',()=>keys.thrust=false);
-window.addEventListener('mouseup',e=>{if(e.button===0)keys.thrust=false;});
-document.addEventListener('mousemove',e=>{
-  if(document.pointerLockElement===renderer.domElement&&joined&&phase==='battle')
-    updateAim(e.movementX,e.movementY);
-});
+renderer.domElement.addEventListener('pointerup',e=>{if(e.button===0)keys.attack=false;});
+renderer.domElement.addEventListener('pointercancel',()=>keys.attack=false);
+window.addEventListener('mouseup',e=>{if(e.button===0)keys.attack=false;});
 renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
-renderer.domElement.addEventListener('wheel',e=>{camDistance=Math.max(4.3,Math.min(11,camDistance+Math.sign(e.deltaY)*.48));e.preventDefault();},{passive:false});
+renderer.domElement.addEventListener('wheel',e=>{camDistance=Math.max(9.5,Math.min(23,camDistance+Math.sign(e.deltaY)*.68));e.preventDefault();},{passive:false});
 const joystick=$('joystick'),stick=$('stick');let stickId=null;
 function moveStick(e){
   const rect=joystick.getBoundingClientRect(),cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
@@ -588,30 +579,34 @@ for(const b of document.querySelectorAll('[data-touch]')){
 setInterval(()=>{
   if(!joined||phase!=='battle'||socket?.readyState!==WebSocket.OPEN)return;
   const k={};for(const key of Object.keys(keys))k[key]=keys[key]||touch[key];
-  k.thrust=keys.thrust||touch.attack;
-  socket.send(JSON.stringify({t:'input',k,yaw:smallDevice?camYaw:aimYaw,pitch:smallDevice?0:aimPitch}));
+  k.thrust=false;
+  let mobileYaw=aimYaw;
+  if(smallDevice){
+    const sx=Number(!!touch.d)-Number(!!touch.a),sz=Number(!!touch.w)-Number(!!touch.s);
+    const dx=-sx*Math.cos(FIXED_CAM_YAW)+sz*Math.sin(FIXED_CAM_YAW);
+    const dz=sz*Math.cos(FIXED_CAM_YAW)+sx*Math.sin(FIXED_CAM_YAW);
+    if(Math.hypot(dx,dz)>.1)mobileYaw=Math.atan2(dx,dz);
+  }
+  socket.send(JSON.stringify({t:'input',k,yaw:mobileYaw,pitch:smallDevice?0:aimPitch}));
 },50);
 
 function animate(dt){
   elapsed+=dt;
-  if(joined&&phase==='battle'){
-    const yawSpeed=1.50,pitchSpeed=.86;
-    if(viewKeys.a)camYaw+=dt*yawSpeed;
-    if(viewKeys.d)camYaw-=dt*yawSpeed;
-    if(viewKeys.w)camPitch=Math.min(1.14,camPitch+dt*pitchSpeed);
-    if(viewKeys.s)camPitch=Math.max(.10,camPitch-dt*pitchSpeed);
+  updateAimFromCursor();
+  for(const f of fireflies){
+    f.t+=dt;f.mesh.position.y+=Math.sin(elapsed*1.2+f.seed)*.004;
+    f.mesh.material.opacity=.36+.23*Math.sin(elapsed*1.8+f.seed*2.1);
   }
   animatePreview(elapsed);
   const meModel=playerModels.get(selfId);
   if(meModel&&phase==='battle'){
     const p=meModel.display;
     const f=new THREE.Vector3(p.x,p.y+1.2,p.z);
-    const orbitRadius=camDistance*Math.cos(camPitch);
-    const toCam=new THREE.Vector3(p.x-Math.sin(camYaw)*orbitRadius,p.y+1.3+Math.sin(camPitch)*camDistance,p.z-Math.cos(camYaw)*orbitRadius);
+    const orbitRadius=camDistance*Math.cos(FIXED_CAM_PITCH);
+    const toCam=new THREE.Vector3(p.x-Math.sin(FIXED_CAM_YAW)*orbitRadius,p.y+1.5+Math.sin(FIXED_CAM_PITCH)*camDistance,p.z-Math.cos(FIXED_CAM_YAW)*orbitRadius);
     targetCamera.lerp(toCam,Math.min(1,dt*6));targetLook.lerp(f,Math.min(1,dt*8));
   }else{
-    const a=elapsed*.095-.35;
-    targetCamera.lerp(new THREE.Vector3(Math.sin(a)*21,12,Math.cos(a)*21),Math.min(1,dt*2.4));
+    targetCamera.lerp(new THREE.Vector3(15,15,-19),Math.min(1,dt*1.7));
     targetLook.lerp(new THREE.Vector3(0,1,0),Math.min(1,dt*2));
   }
   camera.position.copy(targetCamera);camera.lookAt(targetLook);
@@ -656,11 +651,7 @@ function animate(dt){
     const v=aimLine.geometry.attributes.position;v.setXYZ(0,from.x,from.y,from.z);v.setXYZ(1,to.x,to.y,to.z);v.needsUpdate=true;
     aimDot.position.copy(to);aimDot.scale.setScalar(keys.thrust?1.48:1);
   }
-  hazardCircle.material.opacity=latestState?.hazard ? .27 : .035;
-  hazardRing.material.opacity=latestState?.hazard ? .95 : .35;
-  hazardRing.material.color.set(latestState?.hazard?'#ff3862':'#ff966f');
-  hazardRing.rotation.z+=dt*.17;
-  const scale=1+Math.sin(elapsed*3)*.018;hazardRing.scale.setScalar(scale);
+  // Original-style forest stage has no flashing electric hazard.
   animateEffects(dt);
   renderer.render(scene,camera);
 }
