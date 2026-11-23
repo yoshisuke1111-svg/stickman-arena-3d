@@ -119,3 +119,21 @@ test('bomb explosion deals area damage, gives credit to owner, and spares bystan
   assert.equal(p2.dead,true);assert.equal(p1.kills,1);
   assert.equal(away.hp,100);assert.equal(p1.hp,100);
 });
+
+
+test('WASD lateral movement follows the camera: A left and D right on screen',()=>{
+  const {api,room,p1,p2}=setup();api.start(room);
+  p1.x=0;p1.z=0;p1.y=0;p1.facing=0;p1.input={d:true};p2.input={};p2.x=9;p2.z=9;
+  api.tick(room,1/30);
+  assert.ok(p1.x<0,'looking toward +Z, screen-right points toward -X');
+  assert.ok(Math.abs(p1.z)<.1);
+  p1.x=0;p1.z=0;p1.input={a:true};
+  api.tick(room,1/30);
+  assert.ok(p1.x>0,'looking toward +Z, screen-left points toward +X');
+  p1.x=0;p1.z=0;p1.facing=Math.PI/2;p1.input={d:true};
+  api.tick(room,1/30);
+  assert.ok(p1.z>0,'when looking toward +X, screen-right points toward +Z');
+  p1.x=0;p1.z=0;p1.input={a:true};
+  api.tick(room,1/30);
+  assert.ok(p1.z<0,'when looking toward +X, screen-left points toward -Z');
+});
