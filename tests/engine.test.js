@@ -207,16 +207,16 @@ test('Space jumps only once per key press',()=>{
  p1.input={jump:true};api.tick(room,1/30);
  assert.ok(p1.y>0);
 });
-test('CPU uses human movement speed without any independent boost',()=>{
+test('CPU has exactly the same walking speed as the player, without boost',()=>{
  const {api,room,p1,p2}=setup();api.start(room);
  p1.x=0;p1.z=0;p1.input={w:true};p1.facing=0;
- p2.isBot=true;p2.x=0;p2.z=0;p2.facing=0;
+ p2.isBot=true;p2.x=8;p2.z=-6;p2.facing=0;
  const before=[p2.x,p2.z];api.tick(room,1/30);
  assert.equal(p2.input.thrust,undefined);
- assert.ok(p2.moveAmount<=1);
+ assert.equal(p2.moveAmount,1,'CPU actually walks');
  const humanSpeed=Math.hypot(p1.x,p1.z)*30;
  const botSpeed=Math.hypot(p2.x-before[0],p2.z-before[1])*30;
- assert.ok(botSpeed<=humanSpeed+.001);
+ assert.ok(Math.abs(botSpeed-humanSpeed)<.01);
 });
 test('sword skill propels fighter instead of launching a slash',()=>{
  const {api,room,p1}=setup();api.start(room);p1.weapon='blade';
