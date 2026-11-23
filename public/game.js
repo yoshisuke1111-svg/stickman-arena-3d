@@ -149,10 +149,8 @@ const cyl=new THREE.CylinderGeometry(1,1,1,9),ballGeo=new THREE.SphereGeometry(1
 function bodyPiece(parent,geo,material,pos,scale){const m=new THREE.Mesh(geo,material);m.position.set(...pos);m.scale.set(...scale);m.castShadow=true;parent.add(m);return m;}
 function buildFighter(p){
   const root=new THREE.Group();scene.add(root);
-  const dark=mat('#061524',.3,.7),colorMat=mat(p.c||'#43e7db',.27,.4,.6),glow=mat(p.c||'#43e7db',.2,.35,1.2);
+  const dark=mat('#291b36',.05,.83),colorMat=mat(p.c||'#43e7db',.06,.77,.08),glow=mat(p.c||'#43e7db',.03,.7,.17);
   bodyPiece(root,ballGeo,colorMat,[0,1.95,0],[.29,.29,.29]);
-  bodyPiece(root,ballGeo,dark,[ -.095,1.985,.263],[.037,.05,.034]);
-  bodyPiece(root,ballGeo,dark,[.095,1.985,.263],[.037,.05,.034]);
   bodyPiece(root,cyl,colorMat,[0,1.23,0],[.15,.86,.15]);
   bodyPiece(root,ballGeo,colorMat,[0,.8,0],[.19,.15,.18]);
   bodyPiece(root,ballGeo,glow,[0,1.6,0],[.17,.1,.17]);
@@ -165,7 +163,7 @@ function buildFighter(p){
   const weaponGroup=new THREE.Group();weaponGroup.position.set(0,-.73,0);rightArm.add(weaponGroup);
   const nameSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(document.createElement('canvas')),depthTest:false,transparent:true}));
   nameSprite.position.set(0,2.68,0);nameSprite.scale.set(2.7,.7,1);root.add(nameSprite);
-  const ring=new THREE.Mesh(new THREE.RingGeometry(.48,.56,40),new THREE.MeshBasicMaterial({color:p.c||'#49edda',transparent:true,opacity:.6,side:THREE.DoubleSide}));
+  const ring=new THREE.Mesh(new THREE.RingGeometry(.40,.455,40),new THREE.MeshBasicMaterial({color:p.c||'#49edda',transparent:true,opacity:.28,side:THREE.DoubleSide}));
   ring.rotation.x=-Math.PI/2;ring.position.y=.04;root.add(ring);
   const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f,pitch:p.pitch||0,hs:p.hs||0},bodyYaw:p.f,walkPhase:Math.random()*6.28};
   replaceWeapon(model,p.w);labelSprite(model,p);
@@ -176,7 +174,7 @@ function replaceWeapon(model,w){
   if(model.lastWeapon===w)return;
   const group=model.weaponGroup;
   while(group.children.length){const m=group.children[0];group.remove(m);if(m.geometry!==boxGeo&&m.geometry!==cyl&&m.geometry!==ballGeo)m.geometry?.dispose();}
-  const steel=mat('#bbcbd4',.7,.25),black=mat('#1a2939',.8,.3),edge=mat(model.target.c||'#57e7ee',.35,.25,1.2);
+  const steel=mat('#eee0cc',.22,.37),black=mat('#332b3a',.1,.77),edge=mat(model.target.c||'#57e7ee',.04,.67,.22);
   if(w==='blade'){
     addPart(group,boxGeo,black,0,0,.10,.13,.16,.45);
     addPart(group,boxGeo,steel,0,0,.32,.62,.09,.13);
@@ -217,9 +215,9 @@ function labelSprite(m,p){
   const label=p.n+String(p.hp)+p.dead;if(m.lastLabel===label)return;m.lastLabel=label;
   const canvas=document.createElement('canvas');canvas.width=320;canvas.height=90;
   const ctx=canvas.getContext('2d');
-  ctx.fillStyle='rgba(5,17,30,.78)';ctx.beginPath();ctx.roundRect(10,6,300,76,15);ctx.fill();
+  ctx.fillStyle='rgba(45,27,57,.78)';ctx.beginPath();ctx.roundRect(10,6,300,76,15);ctx.fill();
   ctx.font='bold 28px sans-serif';ctx.textAlign='center';ctx.fillStyle=p.c;ctx.fillText(p.n.slice(0,14),160,38,285);
-  ctx.fillStyle='#314457';ctx.fillRect(26,56,268,11);
+  ctx.fillStyle='#58445f';ctx.fillRect(26,56,268,11);
   ctx.fillStyle=p.dead?'#a84b5c':p.c;ctx.fillRect(26,56,268*Math.max(0,p.hp)/100,11);
   const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
   if(m.nameSprite.material.map)m.nameSprite.material.map.dispose();
@@ -233,8 +231,8 @@ const effects=[];
 // An independent 3D guide shows the weapon direction, even when the view orbits.
 const aimGuide=new THREE.Group();scene.add(aimGuide);
 const guideGeometry=new THREE.BufferGeometry();guideGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
-const aimLine=new THREE.Line(guideGeometry,new THREE.LineBasicMaterial({color:'#72ecff',transparent:true,opacity:.62,depthTest:false}));
-const aimDot=new THREE.Mesh(new THREE.OctahedronGeometry(.17),new THREE.MeshBasicMaterial({color:'#95f7ff',transparent:true,opacity:.90,depthTest:false}));
+const aimLine=new THREE.Line(guideGeometry,new THREE.LineBasicMaterial({color:'#ffe0b6',transparent:true,opacity:.46,depthTest:false}));
+const aimDot=new THREE.Mesh(new THREE.OctahedronGeometry(.11),new THREE.MeshBasicMaterial({color:'#ffe8c5',transparent:true,opacity:.82,depthTest:false}));
 aimLine.renderOrder=5;aimDot.renderOrder=6;aimGuide.add(aimLine,aimDot);
 let lastPlayers=[];
 function syncWorld(players,shots,bombStates=[]){
@@ -247,7 +245,7 @@ function syncWorld(players,shots,bombStates=[]){
     if(model.lastWeapon!==p.w)replaceWeapon(model,p.w);
     labelSprite(model,p);
     if(model.headMat.color.getStyle()!==p.c){model.headMat.color.set(p.c);model.glow.color.set(p.c);model.ring.material.color.set(p.c);}
-    model.ring.material.opacity=p.id===selfId?.95:.15;
+    model.ring.material.opacity=p.id===selfId?.45:.12;
   }
   for(const [id,m] of playerModels)if(!idSet.has(id)){destroyModel(m);playerModels.delete(id);}
   const bulletIds=new Set();
@@ -617,7 +615,8 @@ function animate(dt){
     d.pitch=THREE.MathUtils.lerp(d.pitch||0,p.pitch||0,t);d.hs=p.hs||0;
     const diff=Math.atan2(Math.sin(p.f-d.f),Math.cos(p.f-d.f));d.f+=diff*t;
     m.root.position.set(d.x,d.y,d.z);
-    const bodyTurn=Math.atan2(Math.sin(d.f-m.bodyYaw),Math.cos(d.f-m.bodyYaw));
+    const bodyTarget=p.bf??d.f;
+    const bodyTurn=Math.atan2(Math.sin(bodyTarget-m.bodyYaw),Math.cos(bodyTarget-m.bodyYaw));
     m.bodyYaw+=bodyTurn*Math.min(1,dt*4.3);m.root.rotation.y=m.bodyYaw;
     const armTurn=Math.atan2(Math.sin(d.f-m.bodyYaw),Math.cos(d.f-m.bodyYaw));
     m.rightArm.rotation.y=THREE.MathUtils.clamp(armTurn,-1.4,1.4);
@@ -629,17 +628,19 @@ function animate(dt){
     const flail=(p.spin||0)*Math.sin(elapsed*17+Number(p.id));
     m.leftLeg.rotation.x=swingWalk+hitLean*.52;m.rightLeg.rotation.x=-swingWalk-hitLean*.38;
     m.leftLeg.rotation.z=-flail*.28;m.rightLeg.rotation.z=flail*.28;
-    m.leftArm.rotation.x=-swingWalk*.65-.14+hitLean*.65;
+    m.leftArm.rotation.x=-swingWalk*.65-.14+hitLean*.65+Math.sin(elapsed*5+Number(p.id))*.06;
     const strike=p.a>0?Math.sin((.78-p.a)*10)*1.10:0;
-    m.rightArm.rotation.x=-(d.pitch||0)-strike*.40-flail*.25+(d.hs>0?Math.sin(elapsed*21)*1.4:0);
-    m.rightArm.rotation.z=(d.hs>0?Math.cos(elapsed*21)*1.30:0)+Math.sin(elapsed*12+Number(p.id))*Math.min(1,p.a*.6)+hitLean*.28;
+    m.rightArm.rotation.x=-.28-(d.pitch||0)*.9-strike*.72-flail*.55+(d.hs>0?Math.sin(elapsed*21)*1.4:0);
+    m.rightArm.rotation.z=(d.hs>0?Math.cos(elapsed*21)*1.30:0)+Math.sin(elapsed*11+Number(p.id))*Math.min(1,p.a*.82)+hitLean*.42;
     m.root.rotation.z=p.dead?Math.min(1.15,m.root.rotation.z+dt*5):THREE.MathUtils.lerp(m.root.rotation.z,hitLean*.46+flail*.20,dt*11);
     if(p.dead)m.root.position.y-=.15;
-    const tilt=p.dash>0?-.23:(hitLean*.25+flail*.35);
+    const airborne=!p.ground&&!p.dead;
+    if(airborne){m.root.position.y+=Math.sin(elapsed*8+Number(p.id))*.025;m.leftLeg.rotation.x-=.28;m.rightLeg.rotation.x+=.34;}
+    const tilt=p.dash>0?-.37:(hitLean*.31+flail*.43);
     m.root.rotation.x=THREE.MathUtils.lerp(m.root.rotation.x,tilt,dt*8);
     m.ring.visible=!p.dead;
     m.nameSprite.visible=!p.dead;
-    m.root.traverse(obj=>{if(obj.isMesh && obj.material?.emissive && obj!==m.ring){obj.material.emissiveIntensity=p.hit>0?1.7:.45;}});
+    m.headMat.emissiveIntensity=p.hit>0?.52:.06;
     if(p.inv>0&&p.inv<1.2)m.root.visible=Math.floor(elapsed*14)%2===0;
   }
   const me=playerModels.get(selfId);
@@ -647,9 +648,9 @@ function animate(dt){
   if(aimGuide.visible){
     const d=me.display,dir=new THREE.Vector3(Math.sin(d.f)*Math.cos(d.pitch||0),Math.sin(d.pitch||0),Math.cos(d.f)*Math.cos(d.pitch||0));
     const from=new THREE.Vector3(d.x,d.y+1.35,d.z);
-    const to=from.clone().addScaledVector(dir,3.4);
+    const to=from.clone().addScaledVector(dir,2.8);
     const v=aimLine.geometry.attributes.position;v.setXYZ(0,from.x,from.y,from.z);v.setXYZ(1,to.x,to.y,to.z);v.needsUpdate=true;
-    aimDot.position.copy(to);aimDot.scale.setScalar(keys.thrust?1.48:1);
+    aimDot.position.copy(to);aimDot.scale.setScalar(keys.attack?1.28:1);
   }
   // Original-style forest stage has no flashing electric hazard.
   animateEffects(dt);
