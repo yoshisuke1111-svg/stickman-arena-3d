@@ -18,15 +18,16 @@ scene.background = new THREE.Color('#483265');
 scene.fog = new THREE.FogExp2('#483265', .0145);
 const camera = new THREE.PerspectiveCamera(57,innerWidth/innerHeight,.1,270);
 const clock=new THREE.Clock();
-// Fixed 3/4 diorama camera; WASD never moves the view.
-const FIXED_CAM_YAW=-.62, FIXED_CAM_PITCH=.69;
-let camDistance=16.5,elapsed=0,aimYaw=FIXED_CAM_YAW,aimPitch=0;
+// One shared heading for the weapon, whole stick figure and follow camera.
+// Camera elevation remains constant, but it orbits with the player heading.
+const FOLLOW_CAM_PITCH=.68;
+let camDistance=15.3,elapsed=0,aimYaw=0,aimPitch=0;
 const targetLook = new THREE.Vector3(0,1.3,0);
 const targetCamera = new THREE.Vector3(11,13,-14);
 camera.position.copy(targetCamera);
 
 const mat=(color,metal=.05,rough=.86,em=0)=>new THREE.MeshStandardMaterial({color,metalness:metal,roughness:rough,emissive:color,emissiveIntensity:em});
-const tealMat=new THREE.MeshBasicMaterial({color:'#9df0eb'}),pinkMat=new THREE.MeshBasicMaterial({color:'#ff8c8b'}),goldMat=new THREE.MeshBasicMaterial({color:'#ffc37a'});
+const tealMat=new THREE.MeshBasicMaterial({color:'#9df0eb'}), pinkMat=new THREE.MeshBasicMaterial({color:'#ff8c8b'}), goldMat=new THREE.MeshBasicMaterial({color:'#ffc37a'});
 function box(w,h,d,m,x=0,y=0,z=0,shadow=true) {
   const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
   mesh.position.set(x,y,z);mesh.castShadow=shadow;mesh.receiveShadow=true;scene.add(mesh);return mesh;
@@ -40,11 +41,11 @@ const moonFill=new THREE.DirectionalLight('#a99fff',.5);moonFill.position.set(15
 const blueLight=new THREE.PointLight('#74d9ef',19,33,2);blueLight.position.set(-8,7,7);scene.add(blueLight);
 const amberLight=new THREE.PointLight('#f6ae6e',19,31,2);amberLight.position.set(10,5,-8);scene.add(amberLight);
 
-// Twilight forest arena: original procedural assets inspired by the supplied
-// footage, with warm timber and autumn silhouettes instead of sci-fi steel.
-const earth=mat('#39283b'),soil=mat('#6a4a70'),dune=mat('#6f4e73');
+// Original low-poly autumn forest. All artwork is procedural, with no imported
+// images or meshes from the reference game. Solidity matches server BLOCKS.
+const earth=mat('#39283b'), soil=mat('#6a4a70'), dune=mat('#6f4e73');
 const cliff=mat('#302539'),warmWood=mat('#b96948'),edgeWood=mat('#ee9855');
-const oldWood=mat('#4e384b'),stones=mat('#8d7790'),moss=mat('#66665e');
+const oldWood=mat('#4e384b'), stones=mat('#8d7790'),moss=mat('#66665e');
 box(25.0,.95,25.0,cliff,0,-.66,0);
 box(24.5,.16,24.5,soil,0,-.07,0);
 const plankTexture=(()=>{
@@ -55,15 +56,12 @@ const plankTexture=(()=>{
     ctx.fillStyle=i%3?'rgba(31,20,49,.12)':'rgba(244,170,122,.085)';
     ctx.fillRect((x+256)%256,(y+256)%256,1+(i%17),1+(i%3));
   }
-  for(let y=16;y<256;y+=48){
-    ctx.strokeStyle='rgba(38,26,42,.24)';ctx.lineWidth=3;ctx.beginPath();
-    ctx.moveTo(0,y);ctx.lineTo(256,y+4);ctx.stroke();
-  }
-  const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;
-  t.repeat.set(4,4);t.colorSpace=THREE.SRGBColorSpace;return t;
+  for(let y=16;y<256;y+=48){ctx.strokeStyle='rgba(38,26,42,.24)';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(256,y+4);ctx.stroke();}
+  const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(4,4);t.colorSpace=THREE.SRGBColorSpace;return t;
 })();
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(24.25,24.25),new THREE.MeshStandardMaterial({map:plankTexture,roughness:.94,color:'#d2bed5'}));
 ground.rotation.x=-Math.PI/2;ground.position.y=.016;ground.receiveShadow=true;scene.add(ground);
+// Warm, irregular boards around the stage instead of metal neon strips.
 for(let i=-12;i<12;i+=1.65){
   const w=Math.min(1.7,12-i),j=Math.sin(i*9)*.035;
   box(w,.17,.34,edgeWood,i+w/2,-.02,12.12+j,false);
@@ -71,30 +69,48 @@ for(let i=-12;i<12;i+=1.65){
   box(.34,.17,w,edgeWood,12.12+j,-.02,i+w/2,false);
   box(.34,.17,w,warmWood,-12.12-j,-.02,i+w/2,false);
 }
+// Physically solid outer walls also exist on the authoritative server.
+// Semi-transparent upper walls keep the fighter visible near the camera.
+const wallStone=mat('#493551'),wallCap=mat('#da8252'),wallUpper=new THREE.MeshStandardMaterial({color:'#856e97',transparent:true,opacity:.24,roughness:.93,side:THREE.DoubleSide,depthWrite:false});
+for(const side of [-1,1]){
+  box(25.5,3.6,.67,wallStone,0,1.8,side*12.08);
+  box(.67,3.6,25.5,wallStone,side*12.08,1.8,0);
+  box(25.5,.18,.78,wallCap,0,3.58,side*12.08,false);
+  box(.78,.18,25.5,wallCap,side*12.08,3.58,0,false);
+  box(25.5,4.4,.08,wallUpper,0,5.85,side*12.08,false);
+  box(.08,4.4,25.5,wallUpper,side*12.08,5.85,0,false);
+}
+for(const x of [-12,12])for(const z of [-12,12]){
+  box(.95,4.45,.95,wallStone,x,2.2,z);
+  box(1.08,.28,1.08,wallCap,x,4.48,z,false);
+}
 const blocks=[[-4.4,-1.6,2.7,2.7,2.15],[4.4,1.6,2.7,2.7,2.15],[-1.6,5.5,2.2,1.9,1.25],[1.6,-5.5,2.2,1.9,1.25]];
 for(const [x,z,w,d,h] of blocks){
   box(w,h,d,oldWood,x,h/2,z);
   box(w,.17,d,soil,x,h-.085,z);
+  // Broken-looking wooden ledge cap, with a bright copper-coloured rim.
   box(w+.17,.13,d+.20,edgeWood,x,h-.065,z,false);
   box(w-.21,.05,d-.12,soil,x,h+.015,z,false);
-  for(let n=-1;n<=1;n++)box(.055,h*.69,.04,warmWood,x+n*(w*.31),h*.38,z+d/2+.018,false);
+  for(let n=-1;n<=1;n++){
+    box(.055,h*.69,.04,warmWood,x+n*(w*.31),h*.38,z+d/2+.018,false);
+  }
 }
+// Scattered leaves, tufts and layered stones (visual only, no collision).
 const stageDressing=new THREE.Group();scene.add(stageDressing);
-const rnd=(seed)=>{const a=Math.sin(seed*132.23+41.92)*43758.5453;return a-Math.floor(a);};
+const rnd=(seed)=>{let a=Math.sin(seed*132.23+41.92)*43758.5453;return a-Math.floor(a);};
 for(let i=0;i<120;i++){
   const x=(rnd(i+2)*2-1)*11.5,z=(rnd(i+63)*2-1)*11.5;
   if(Math.hypot(x,z)<1.5)continue;
-  const size=.09+rnd(i+13)*.15;
+  const s=.09+rnd(i+13)*.15;
   if(i%6===0){
-    const stone=new THREE.Mesh(new THREE.DodecahedronGeometry(size*1.8,0),stones);
-    stone.scale.set(1.5,.25,1);stone.rotation.y=rnd(i+44)*Math.PI;
-    stone.position.set(x,.065,z);stageDressing.add(stone);
+    const stone=new THREE.Mesh(new THREE.DodecahedronGeometry(s*1.8,0),stones);stone.scale.set(1.5,.25,1);
+    stone.rotation.y=rnd(i+44)*Math.PI;stone.position.set(x,.065,z);stageDressing.add(stone);
   }else{
-    const leaf=new THREE.Mesh(new THREE.CircleGeometry(size,3),new THREE.MeshBasicMaterial({color:i%5===0?'#d48959':'#8d646d',side:THREE.DoubleSide}));
-    leaf.rotation.x=-Math.PI/2;leaf.rotation.z=rnd(i+77)*6;
-    leaf.position.set(x,.029+rnd(i+22)*.008,z);stageDressing.add(leaf);
+    const leaf=new THREE.Mesh(new THREE.CircleGeometry(s,3),new THREE.MeshBasicMaterial({color:i%5===0?'#d48959':'#8d646d',side:THREE.DoubleSide}));
+    leaf.rotation.x=-Math.PI/2;leaf.rotation.z=rnd(i+77)*6;leaf.position.set(x,.029+rnd(i+22)*.008,z);stageDressing.add(leaf);
   }
 }
+// Far scenery: hills, moon and crooked trees silhouetted against lavender fog.
 const scenery=new THREE.Group();scene.add(scenery);
 const hillColors=['#4b335f','#463457','#564069','#392d4e'];
 for(let i=0;i<21;i++){
@@ -107,22 +123,22 @@ function treeBranch(parent,a,b,width,material){
   const v1=new THREE.Vector3(...a),v2=new THREE.Vector3(...b);
   const delta=v2.clone().sub(v1),length=delta.length();
   const mesh=new THREE.Mesh(new THREE.CylinderGeometry(width*.65,width,length,5),material);
-  mesh.position.copy(v1).add(v2).multiplyScalar(.5);
-  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
+  mesh.position.copy(v1).add(v2).multiplyScalar(.5);mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
   parent.add(mesh);
 }
 const darkTrunk=mat('#2e2544'),dimTrunk=mat('#483153');
 for(let i=0;i<24;i++){
-  const a=i*2.399963,r=19+(i%5)*4.1,x=Math.sin(a)*r,z=Math.cos(a)*r;
-  const h=4.5+rnd(i+4)*5,tree=new THREE.Group();
-  tree.position.set(x,-1.65,z);scenery.add(tree);
+  const a=i*2.399963,r=19+(i%5)*4.1;
+  const x=Math.sin(a)*r,z=Math.cos(a)*r;
+  const h=4.5+rnd(i+4)*5;
+  const tree=new THREE.Group();tree.position.set(x,-1.65,z);scenery.add(tree);
   const m=i%3===0?dimTrunk:darkTrunk;
   treeBranch(tree,[0,0,0],[.20*Math.sin(i*4),h,0],.38,m);
   for(let j=0;j<4;j++){
-    const theta=i*2.1+j*1.67,height=h*(.48+j*.105);
-    const origin=[Math.sin(i*4)*height/h*.2,height,0];
+    const theta=i*2.1+j*1.67;const height=h*(.48+j*.105);
+    const start=[Math.sin(i*4)*height/h*.2,height,0];
     const tip=[Math.sin(theta)*(1.2+j*.28),height+1.5+(j%2)*.8,Math.cos(theta)*(1.1+j*.3)];
-    treeBranch(tree,origin,tip,.13,m);
+    treeBranch(tree,start,tip,.13,m);
     treeBranch(tree,tip,[tip[0]*1.3,tip[1]+.7,tip[2]*1.28],.061,m);
   }
 }
@@ -137,12 +153,13 @@ for(let i=0;i<18;i++){
 }
 const fireflies=[];
 for(let i=0;i<42;i++){
-  const fleck=new THREE.Mesh(new THREE.OctahedronGeometry(.038+(i%4)*.014),new THREE.MeshBasicMaterial({color:i%7===0?'#ffcc84':'#8bcfba',transparent:true,opacity:.48}));
+  const hue=i%7===0?'#ffcc84':'#8bcfba';
+  const fleck=new THREE.Mesh(new THREE.OctahedronGeometry(.038+(i%4)*.014),new THREE.MeshBasicMaterial({color:hue,transparent:true,opacity:.48}));
   const x=(rnd(i+30)*2-1)*15,z=(rnd(i+81)*2-1)*15;
   fleck.position.set(x,.5+rnd(i+100)*5,z);scenery.add(fleck);
   fireflies.push({mesh:fleck,seed:i,t:0});
 }
-// Compatibility shims for disabled sci-fi hazard (no arena damage).
+// The original videos show no timed central laser or hazard.
 const hazardCircle={material:{opacity:0}},hazardRing={material:{opacity:0,color:new THREE.Color('#ff966f')},rotation:{z:0},scale:{setScalar(){}}};
 
 const cyl=new THREE.CylinderGeometry(1,1,1,9),ballGeo=new THREE.SphereGeometry(1,14,10),boxGeo=new THREE.BoxGeometry(1,1,1);
@@ -165,7 +182,7 @@ function buildFighter(p){
   nameSprite.position.set(0,2.68,0);nameSprite.scale.set(2.7,.7,1);root.add(nameSprite);
   const ring=new THREE.Mesh(new THREE.RingGeometry(.40,.455,40),new THREE.MeshBasicMaterial({color:p.c||'#49edda',transparent:true,opacity:.28,side:THREE.DoubleSide}));
   ring.rotation.x=-Math.PI/2;ring.position.y=.04;root.add(ring);
-  const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f,pitch:p.pitch||0,hs:p.hs||0},bodyYaw:p.f,walkPhase:Math.random()*6.28};
+  const model={root,leftArm,rightArm,leftLeg,rightLeg,weaponGroup,nameSprite,ring,headMat:colorMat,glow,lastWeapon:'',lastLabel:'',target:p,display:{x:p.x,y:p.y,z:p.z,f:p.f,pitch:p.pitch||0,hs:p.hs||0,dash:0},bodyYaw:p.f,walkPhase:Math.random()*6.28,trailAt:0};
   replaceWeapon(model,p.w);labelSprite(model,p);
   return model;
 }
@@ -225,35 +242,38 @@ function labelSprite(m,p){
 }
 function destroyModel(m){scene.remove(m.root);m.nameSprite.material.map?.dispose();m.nameSprite.material.dispose();}
 const playerModels=new Map();
-
-// A solid 3D crescent, not a ring or a flat copied sprite.
-function crescentGeometry(radius=1,angleWidth=Math.PI*1.25){
-  const count=28,verts=[],a0=-(Math.PI+angleWidth)/2,a1=(angleWidth-Math.PI)/2;
+// A thick swept crescent rather than a wireframe torus: inspired by the
+// broad, bright blade strokes visible in the reference videos.
+function crescentGeometry(radius=1.0,angleWidth=Math.PI*1.25){
+  const points=28,verts=[],alpha1=-(Math.PI+angleWidth)/2,alpha2=(angleWidth-Math.PI)/2;
   const outer=radius*1.12,inner=radius*.66;
-  for(let i=0;i<count-1;i++){
-    const a=a0+(a1-a0)*i/(count-1),b=a0+(a1-a0)*(i+1)/(count-1);
-    const o1=[Math.cos(a)*outer,Math.sin(a)*outer,0],o2=[Math.cos(b)*outer,Math.sin(b)*outer,0];
-    const i1=[Math.cos(a)*inner,Math.sin(a)*inner,.035],i2=[Math.cos(b)*inner,Math.sin(b)*inner,.035];
-    verts.push(...o1,...i1,...o2,...i1,...i2,...o2);
+  for(let i=0;i<points-1;i++){
+    const a=alpha1+(alpha2-alpha1)*i/(points-1);
+    const b=alpha1+(alpha2-alpha1)*(i+1)/(points-1);
+    const outerA=[Math.cos(a)*outer,Math.sin(a)*outer,0];
+    const outerB=[Math.cos(b)*outer,Math.sin(b)*outer,0];
+    const innerA=[Math.cos(a)*inner,Math.sin(a)*inner,.035];
+    const innerB=[Math.cos(b)*inner,Math.sin(b)*inner,.035];
+    verts.push(...outerA,...innerA,...outerB,...innerA,...innerB,...outerB);
   }
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
-  geo.computeVertexNormals();return geo;
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
+  g.computeVertexNormals();return g;
 }
 function crescentMesh(color,size=1,opacity=.82){
   return new THREE.Mesh(crescentGeometry(size),new THREE.MeshBasicMaterial({color,transparent:true,opacity,side:THREE.DoubleSide,depthWrite:false,fog:false}));
 }
 const bullets=new Map();
 const thrownBombs=new Map();
+const axeTunnels=new Map(),axePulses=new Map();
 const effects=[];
-// An independent 3D guide shows the weapon direction, even when the view orbits.
+// Local aim guide stays visible even when WASD rotates the camera independently.
 const aimGuide=new THREE.Group();scene.add(aimGuide);
 const guideGeometry=new THREE.BufferGeometry();guideGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
 const aimLine=new THREE.Line(guideGeometry,new THREE.LineBasicMaterial({color:'#ffe0b6',transparent:true,opacity:.46,depthTest:false}));
 const aimDot=new THREE.Mesh(new THREE.OctahedronGeometry(.11),new THREE.MeshBasicMaterial({color:'#ffe8c5',transparent:true,opacity:.82,depthTest:false}));
 aimLine.renderOrder=5;aimDot.renderOrder=6;aimGuide.add(aimLine,aimDot);
 let lastPlayers=[];
-function syncWorld(players,shots,bombStates=[]){
+function syncWorld(players,shots,bombStates=[],tunnels=[],pulses=[]){
   const idSet=new Set();
   for(const p of players){
     idSet.add(p.id);
@@ -271,20 +291,30 @@ function syncWorld(players,shots,bombStates=[]){
     bulletIds.add(p.id);
     let b=bullets.get(p.id);
     if(!b){
-      const group=new THREE.Group();
-      const color=p.kind==='dragon'?'#64f3ff':p.kind==='axeWave'?'#4bf3db':p.kind==='slash'?'#9ceeff':p.color;
+      const group=new THREE.Group(), color=p.kind==='dragon'?'#59f5ff':p.kind==='axeThrown'?'#d4fcff':p.kind==='axeWave'?'#4bf3db':p.kind==='slash'?'#b7ffff':p.color;
       const glowMaterial=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.87,side:THREE.DoubleSide,depthWrite:false});
       if(p.kind==='dragon'){
-        // Curved original cyan dragon-energy ribbon, with a head and two horns.
+        // Stylised cyan dragon-shaped energy ribbon, built from a curved spine,
+        // a distinct head, two horns and trailing luminous fins.
         const points=[];
-        for(let i=0;i<=12;i++){const t=i/12;points.push(new THREE.Vector3(Math.sin(t*12)*(.2+t*.26),Math.cos(t*10)*.22,1-t*3.4));}
+        for(let i=0;i<=12;i++){const t=i/12;points.push(new THREE.Vector3(Math.sin(t*12)*(.2+t*.26),Math.cos(t*10)*.22,1.0-t*3.4));}
         const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),28,.12,6,false),glowMaterial);
         group.add(tube);
         const head=new THREE.Mesh(new THREE.ConeGeometry(.38,.75,7),glowMaterial);head.rotation.x=Math.PI/2;head.position.z=1.34;group.add(head);
-        for(const side of [-1,1]){
+        for(const sign of [-1,1]){
           const horn=new THREE.Mesh(new THREE.ConeGeometry(.095,.55,5),glowMaterial);
-          horn.rotation.z=side*.62;horn.position.set(side*.26,.33,1.17);group.add(horn);
+          horn.rotation.z=sign*.62;horn.position.set(sign*.26,.33,1.17);group.add(horn);
         }
+      }else if(p.kind==='axeThrown'){
+        // Real spinning axe projectile, not a static half-moon shot.
+        const spinning=new THREE.Group();spinning.position.z=.3;group.add(spinning);
+        const handle=new THREE.Mesh(new THREE.CylinderGeometry(.075,.082,1.3,7),mat('#4c314a'));
+        handle.rotation.x=Math.PI/2;spinning.add(handle);
+        const head=new THREE.Mesh(new THREE.BoxGeometry(.85,.23,.37),mat('#e8ecf2',.3,.43));
+        head.position.z=.46;spinning.add(head);
+        const edge=new THREE.Mesh(new THREE.BoxGeometry(.08,.27,.42),new THREE.MeshBasicMaterial({color:'#8beeff'}));
+        edge.position.set(-.41,0,.46);spinning.add(edge);
+        group.userData.spinning=spinning;
       }else if(p.kind==='slash'||p.kind==='axeWave'){
         const stroke=crescentMesh(color,p.kind==='axeWave'?1.26:1.02,.91);
         stroke.rotation.z=-.5;group.add(stroke);
@@ -295,13 +325,15 @@ function syncWorld(players,shots,bombStates=[]){
         const core=new THREE.Mesh(new THREE.SphereGeometry(.2,12,8),new THREE.MeshBasicMaterial({color:p.color}));
         group.add(core);
       }
-      const light=new THREE.PointLight(color,3.1,5);group.add(light);scene.add(group);
-      b={group,kind:p.kind};bullets.set(p.id,b);
+      const light=new THREE.PointLight(color,3.1,5);group.add(light);
+      group.position.set(p.x,p.y,p.z);scene.add(group);b={group,kind:p.kind,target:new THREE.Vector3(p.x,p.y,p.z)};bullets.set(p.id,b);
     }
-    b.group.position.set(p.x,p.y,p.z);
-    b.group.rotation.y=p.f;b.group.rotation.x=-(p.pitch||0);
-    b.group.rotation.z=p.kind==='dragon'?Math.sin(elapsed*16)*.08:0;
-    if(p.kind==='dragon')b.group.scale.setScalar(1+Math.sin(elapsed*13)*.07);
+    b.target.set(p.x,p.y,p.z);
+    // Smooth snapshots at 20 Hz; avoid projectile teleports and flicker.
+    b.group.rotation.y=p.f;
+    b.group.rotation.x=-(p.pitch||0);
+    b.group.rotation.z=p.kind==='dragon'?Math.sin(elapsed*7)*.075:0;
+    if(p.kind==='dragon')b.group.scale.setScalar(1+Math.sin(elapsed*8)*.035);
   }
   for(const [id,b] of bullets)if(!bulletIds.has(id)){
     scene.remove(b.group);
@@ -329,12 +361,83 @@ function syncWorld(players,shots,bombStates=[]){
     scene.remove(b.group);b.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();obj.material.dispose();}});thrownBombs.delete(id);
   }
 }
+function removeVisual(g){scene.remove(g);g.traverse(o=>{if(o.isMesh){o.geometry.dispose();o.material.dispose();}});}
+function syncAxeWorld(tunnels,pulses){
+  const ids=new Set();
+  for(const t of tunnels){
+    ids.add(t.id);let visual=axeTunnels.get(t.id);
+    if(!visual){
+      const group=new THREE.Group();scene.add(group);
+      const glass=new THREE.Mesh(new THREE.CylinderGeometry(1.10,1.10,t.length,20,1,true),
+        new THREE.MeshBasicMaterial({color:'#61c9ff',transparent:true,opacity:.25,side:THREE.DoubleSide,depthWrite:false}));
+      glass.rotation.x=Math.PI/2;group.add(glass);
+      const lining=new THREE.Mesh(new THREE.CylinderGeometry(.9,.9,t.length,16,1,true),
+        new THREE.MeshBasicMaterial({color:'#a3f9ff',transparent:true,opacity:.095,side:THREE.DoubleSide,depthWrite:false}));
+      lining.rotation.x=Math.PI/2;group.add(lining);
+      const rimMat=new THREE.MeshBasicMaterial({color:'#aafaff',transparent:true,opacity:.70,side:THREE.DoubleSide});
+      for(const z of [-t.length/2,t.length/2]){
+        const rim=new THREE.Mesh(new THREE.TorusGeometry(1.10,.035,6,32),rimMat.clone());rim.position.z=z;group.add(rim);
+      }
+      const streams=[];
+      for(let i=0;i<4;i++){
+        const bar=new THREE.Mesh(new THREE.CylinderGeometry(.025,.025,t.length,6),
+          new THREE.MeshBasicMaterial({color:'#8beaff',transparent:true,opacity:.17,depthWrite:false}));
+        bar.rotation.x=Math.PI/2;bar.position.set(Math.cos(i*Math.PI/2)*.73,Math.sin(i*Math.PI/2)*.73,0);group.add(bar);streams.push(bar);
+      }
+      const bubbles=[];
+      for(let i=0;i<24;i++){
+        const rad=.09+(i%5)*.028;
+        const bubble=new THREE.Mesh(new THREE.SphereGeometry(rad,9,7),
+          new THREE.MeshBasicMaterial({color:i%6===0?'#ffffff':'#d3fbff',transparent:true,opacity:.6+(i%3)*.1,depthWrite:false}));
+        group.add(bubble);bubbles.push(bubble);
+      }
+      visual={group,bubbles,streams,age:0,length:t.length};axeTunnels.set(t.id,visual);
+    }
+    visual.age=t.age;
+    visual.group.position.set(t.x+Math.sin(t.f)*t.length/2,t.y,t.z+Math.cos(t.f)*t.length/2);
+    visual.group.rotation.y=t.f;
+    visual.group.rotation.x=-t.pitch;
+    const alpha=Math.min(1,t.life/.6);
+    for(const obj of visual.group.children)if(obj.material?.opacity!==undefined){
+      const material=obj.material;material.userData.baseOpacity??=material.opacity;
+      material.opacity=material.userData.baseOpacity*alpha;
+    }
+  }
+  for(const [id,v] of axeTunnels)if(!ids.has(id)){removeVisual(v.group);axeTunnels.delete(id);}
+  const pulseIds=new Set();
+  for(const p of pulses){
+    pulseIds.add(p.id);let v=axePulses.get(p.id);
+    if(!v){
+      const group=new THREE.Group(),shell=new THREE.Mesh(new THREE.IcosahedronGeometry(.29,1),
+        new THREE.MeshBasicMaterial({color:'#a3faff',transparent:true,opacity:.84,depthWrite:false}));
+      group.add(shell);scene.add(group);v={group,target:new THREE.Vector3()};axePulses.set(p.id,v);
+      group.position.set(p.x,p.y,p.z);
+    }
+    v.target.set(p.x,p.y,p.z);
+  }
+  for(const [id,v] of axePulses)if(!pulseIds.has(id)){removeVisual(v.group);axePulses.delete(id);}
+}
+function animateAxeWorld(dt){
+  for(const v of axeTunnels.values()){
+    for(const [i,b] of v.bubbles.entries()){
+      const a=i*2.399963;
+      const r=.25+(i%6)*.12;
+      b.position.set(Math.cos(a)*r,Math.sin(a)*r,((i*.77+elapsed*(.95+i%3*.2))%v.length)-v.length/2);
+      b.scale.setScalar(.9+.25*Math.sin(elapsed*6+i));
+    }
+  }
+  for(const b of bullets.values()){
+    b.group.position.lerp(b.target,Math.min(1,dt*17));
+    if(b.group.userData.spinning)b.group.userData.spinning.rotation.z+=dt*12;
+  }
+  for(const p of axePulses.values())p.group.position.lerp(p.target,Math.min(1,dt*15));
+}
 function burst(type,x,y,z,color){
   const group=new THREE.Group();group.position.set(x,y,z);scene.add(group);
   const count=type==='explode'?44:type==='super'?25:type==='ko'?28:12;
   const bits=[];
   for(let i=0;i<count;i++){
-    const mesh=new THREE.Mesh(new THREE.OctahedronGeometry(type==='super'?.10:.075),new THREE.MeshBasicMaterial({color:i%4===0?'#ffffff':color,transparent:true,opacity:1}));
+    const mesh=new THREE.Mesh(new THREE.OctahedronGeometry(type==='super'?.10:.075),new THREE.MeshBasicMaterial({color:type==='hit'?(i%4===0?'#fff7d4':i%4===1?'#f7ae75':color):(i%4===0?'#ffffff':color),transparent:true,opacity:1,depthWrite:false}));
     group.add(mesh);
     let a=i*2.3999, h=Math.cos(a*.8);
     bits.push({mesh,v:new THREE.Vector3(Math.cos(a)*(type==='explode'?10:type==='super'?7:3),h*(type==='explode'?6:type==='super'?4:3),Math.sin(a)*(type==='explode'?10:type==='super'?7:3))});
@@ -350,40 +453,50 @@ function animateEffects(dt){
   for(let i=effects.length-1;i>=0;i--){const e=effects[i];e.t+=dt;const life=1-e.t/e.max;
     for(const bit of e.bits){bit.mesh.position.addScaledVector(bit.v,dt);bit.mesh.material.opacity=Math.max(0,life);bit.mesh.rotation.x+=dt*9;bit.mesh.rotation.y+=dt*13;}
     if(e.ring){const scale=1+e.t*5;e.ring.scale.setScalar(scale);e.ring.material.opacity=Math.max(0,life*.8);}
-    if(e.extra)for(const m of e.extra){m.material.opacity=Math.max(0,life*.90);m.scale.setScalar(1+e.t*(e.heavy?.65:1.5));m.rotation.z+=dt*(e.heavy?7:2.4);}
+    if(e.extra)for(const m of e.extra){m.material.opacity=Math.max(0,life*.90);const scale=1+e.t*(e.heavy?.65:1.5);m.scale.setScalar(scale);m.rotation.z+=dt*(e.heavy?7:2.4);}
     if(e.t>=e.max){scene.remove(e.group);e.group.traverse(obj=>{if(obj.isMesh){obj.geometry.dispose();obj.material.dispose();}});effects.splice(i,1);}
   }
 }
-// Weapon-specific arcs, ground shock rings, and dramatic impact flashes.
+// Lightweight visible arcs, shock rings and swirls for weapon-specific abilities.
 function castEffect(e){
   const model=playerModels.get(e.id);
-  const x=Number.isFinite(e.x)?e.x:(model?.display.x??0);
-  const y=Number.isFinite(e.y)?e.y:((model?.display.y??0)+1.25);
-  const z=Number.isFinite(e.z)?e.z:(model?.display.z??0);
+  const x=Number.isFinite(e.x)?e.x:model?.display.x||0;
+  const y=Number.isFinite(e.y)?e.y:(model?.display.y??0)+1.25;
+  const z=Number.isFinite(e.z)?e.z:model?.display.z||0;
   const kind=e.variant||e.kind||e.weapon||'blade';
   const color=kind==='dragon'?'#89ebff':kind==='hammerSpin'?'#fff0cb':'#b9f7ff';
-  const group=new THREE.Group();group.position.set(x,y,z);
-  group.rotation.y=e.f??model?.display.f??0;scene.add(group);
+  const group=new THREE.Group();group.position.set(x,y,z);group.rotation.y=e.f??model?.display.f??0;
+  scene.add(group);
   const meshes=[];
   const addStroke=(size,angle,zOffset=.85)=>{
-    const mesh=crescentMesh(color,size,.83);mesh.rotation.z=angle;mesh.position.z=zOffset;
-    group.add(mesh);meshes.push(mesh);return mesh;
+    const m=crescentMesh(color,size,.83);m.rotation.z=angle;m.position.z=zOffset;
+    group.add(m);meshes.push(m);return m;
   };
-  const spinning=kind==='hammerSpin';
+  const isHammerSpin=kind==='hammerSpin';
+  const isCharge=kind==='swordCharge';
   if(kind==='fanSlashes'){
-    addStroke(1.65,-.35,1.1);addStroke(1.15,.14,1.12);
-  }else if(spinning){
-    for(let i=0;i<3;i++){const m=addStroke(.8+i*.24,i*2.1,.7);m.rotation.x=i*.36;}
-  }else if(kind==='swordCharge'){
-    const m=addStroke(1.55,-.35,.4);m.scale.y=.4;addStroke(1.0,.25,.85);
-  }else if(['axe','hammer','blade','katana'].includes(kind)){
+    const main=addStroke(1.65,-.35,1.1);main.material.opacity=.94;
+    addStroke(1.15,.14,1.12);
+  }else if(isHammerSpin){
+    for(let i=0;i<3;i++){
+      const stroke=addStroke(.8+i*.24,i*2.1,.7);
+      stroke.rotation.x=i*.36;
+    }
+  }else if(isCharge){
+    // A charge creates a trail throughout movement; it must not pop ahead instantly.
+    addStroke(.45,-.2,.13);
+  }else if(kind==='bubbleTunnel'||kind==='axeThrow'){
+    addStroke(.40,-.6,.25);
+  }else if(kind==='shockBurst'||kind==='axeFrontShock'||kind==='tunnelPulse'){
+    const m=addStroke(kind==='axeFrontShock'?2.15:.70,-.2,.4);m.rotation.x=-.22;
+  }else if(kind==='axe' || kind==='hammer' || kind==='blade'||kind==='katana'){
     const m=addStroke(kind==='hammer'?1.8:1.34,kind==='axe'?-.75:.5,.82);m.rotation.x=-.08;
   }else if(kind==='dragon'){
     addStroke(1.05,-.6,1.2);
   }else{
     addStroke(1.22,-.4,1);
   }
-  effects.push({group,bits:[],ring:null,extra:meshes,t:0,max:spinning?.65:.32,heavy:spinning});
+  effects.push({group,bits:[],ring:null,extra:meshes,t:0,max:isHammerSpin?.65:.32,heavy:isHammerSpin});
 }
 const previewGroup=new THREE.Group();scene.add(previewGroup);
 function makePreview(){
@@ -431,7 +544,8 @@ function connect(){
       const me=m.players.find(p=>p.id===selfId);
       if(me && previousHp>me.hp && me.hp>0){$('flash').classList.add('on');setTimeout(()=>$('flash').classList.remove('on'),100);}
       previousHp=me?.hp??100;
-      syncWorld(m.players,m.shots,m.bombs||[]);
+      syncWorld(m.players,m.shots,m.bombs||[],m.tunnels||[],m.pulses||[]);
+      syncAxeWorld(m.tunnels||[],m.pulses||[]);
       handleEvents(m.events);
       updateScreen();updateStats(m,me);
     } else if(m.t==='error'){
@@ -503,6 +617,7 @@ function handleEvents(events){
     }
     else if(e.type==='skillcast'){castEffect(e);playSound(e.weapon==='katana'?760:265,.22,'sawtooth');}
     else if(e.type==='impact'){castEffect(e);burst('super',e.x,e.y,e.z,e.color);}
+    else if(e.type==='projectileBreak'||e.type==='bounce'){burst('hit',e.x,e.y,e.z,'#a4eaff');}
     else if(e.type==='super'){castEffect(e);burst('super',e.x,e.y,e.z,e.color);playSound(140,.36,'sawtooth');}
     else if(e.type==='explode'){burst('explode',e.x,e.y,e.z,e.color||'#ffba66');playSound(95,.45,'sawtooth');}
     else if(e.type==='ko'){burst('ko',e.x,1.2,e.z,'#ff789b');addFeed(e.by?`${e.by} ⚔ ${e.name}`:`${e.name} が落下した`);playSound(110,.28,'triangle');}
@@ -546,38 +661,40 @@ function chooseWeapon(weapon){if(!weaponNames[weapon])return;localWeapon=weapon;
 for(const btn of document.querySelectorAll('[data-weapon]'))btn.onclick=()=>chooseWeapon(btn.dataset.weapon);
 const keyMap={KeyW:'w',KeyA:'a',KeyS:'s',KeyD:'d',ArrowUp:'w',ArrowLeft:'a',ArrowDown:'s',ArrowRight:'d',Space:'jump',KeyE:'skill',KeyQ:'super'};
 window.addEventListener('keydown',e=>{
-  if(e.target instanceof HTMLInputElement||!joined||phase!=='battle')return;
+  if(e.target instanceof HTMLInputElement || !joined || phase!=='battle')return;
   const action=keyMap[e.code];if(action){keys[action]=true;e.preventDefault();}
-  if(e.code==='KeyR'){aimYaw=FIXED_CAM_YAW;aimPitch=0;toast('武器の方向をリセット');}
+  if(e.code==='KeyR'){aimPitch=0;toast('武器を水平に戻した');}
   if(/^Digit[1-6]$/.test(e.code))chooseWeapon(weaponHotkeys[Number(e.code.slice(-1))-1]);
 });
 window.addEventListener('keyup',e=>{const action=keyMap[e.code];if(action)keys[action]=false;});
 window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;for(const k in touch)touch[k]=false;});
-let aimCursor={x:innerWidth*.5,y:innerHeight*.48,active:false};
-const updateAimFromCursor=()=>{
-  const model=playerModels.get(selfId);
-  if(!model||!aimCursor.active)return;
-  const center=new THREE.Vector3(model.display.x,model.display.y+1.4,model.display.z).project(camera);
-  const px=(center.x*.5+.5)*innerWidth,py=(.5-center.y*.5)*innerHeight;
-  const x=aimCursor.x-px,y=py-aimCursor.y;
-  if(Math.hypot(x,y)<24)return;
-  aimYaw=Math.atan2(-x*Math.cos(FIXED_CAM_YAW)+y*Math.sin(FIXED_CAM_YAW),
-    x*Math.sin(FIXED_CAM_YAW)+y*Math.cos(FIXED_CAM_YAW));
-  aimPitch=THREE.MathUtils.clamp((y-20)*.0015,-.58,.75);
+// Mouse, body and camera share a single yaw. Capture mouse on click so
+// continuous rotation works without reaching the edge of the screen.
+let pointerX=innerWidth/2,pointerY=innerHeight/2;
+const changeFacing=(dx,dy)=>{
+  aimYaw-=Math.max(-120,Math.min(120,dx))*.0042;
+  aimPitch=THREE.MathUtils.clamp(aimPitch-Math.max(-100,Math.min(100,dy))*.0033,-.62,.77);
 };
-renderer.domElement.addEventListener('pointermove',e=>{
-  if(!joined||phase!=='battle'||e.pointerType==='touch')return;
-  aimCursor={x:e.clientX,y:e.clientY,active:true};
-});
 renderer.domElement.addEventListener('pointerdown',e=>{
   if(!joined||phase!=='battle')return;
-  if(e.button===0){keys.attack=true;aimCursor={x:e.clientX,y:e.clientY,active:true};}
+  if(e.button===0){
+    keys.attack=true;
+    try{renderer.domElement.requestPointerLock?.()?.catch?.(()=>{});}catch{}
+  }
+});
+document.addEventListener('mousemove',e=>{
+  if(!joined||phase!=='battle')return;
+  if(document.pointerLockElement===renderer.domElement)changeFacing(e.movementX||0,e.movementY||0);
+});
+renderer.domElement.addEventListener('pointermove',e=>{
+  if(!joined||phase!=='battle'||e.pointerType==='touch')return;
+  if(document.pointerLockElement!==renderer.domElement)changeFacing(e.movementX||0,e.movementY||0);
 });
 renderer.domElement.addEventListener('pointerup',e=>{if(e.button===0)keys.attack=false;});
 renderer.domElement.addEventListener('pointercancel',()=>keys.attack=false);
 window.addEventListener('mouseup',e=>{if(e.button===0)keys.attack=false;});
 renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
-renderer.domElement.addEventListener('wheel',e=>{camDistance=Math.max(9.5,Math.min(23,camDistance+Math.sign(e.deltaY)*.68));e.preventDefault();},{passive:false});
+renderer.domElement.addEventListener('wheel',e=>{camDistance=Math.max(11,Math.min(22,camDistance+Math.sign(e.deltaY)*.65));e.preventDefault();},{passive:false});
 const joystick=$('joystick'),stick=$('stick');let stickId=null;
 function moveStick(e){
   const rect=joystick.getBoundingClientRect(),cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
@@ -599,22 +716,21 @@ for(const b of document.querySelectorAll('[data-touch]')){
 setInterval(()=>{
   if(!joined||phase!=='battle'||socket?.readyState!==WebSocket.OPEN)return;
   const k={};for(const key of Object.keys(keys))k[key]=keys[key]||touch[key];
-  k.thrust=false;
-  let mobileYaw=aimYaw;
   if(smallDevice){
     const sx=Number(!!touch.d)-Number(!!touch.a),sz=Number(!!touch.w)-Number(!!touch.s);
-    const dx=-sx*Math.cos(FIXED_CAM_YAW)+sz*Math.sin(FIXED_CAM_YAW);
-    const dz=sz*Math.cos(FIXED_CAM_YAW)+sx*Math.sin(FIXED_CAM_YAW);
-    if(Math.hypot(dx,dz)>.1)mobileYaw=Math.atan2(dx,dz);
+    if(sx<0)aimYaw+=.075;else if(sx>0)aimYaw-=.075;
+    // On touch screens the horizontal stick steers the whole fighter and camera.
+    k.a=false;k.d=false;
   }
-  socket.send(JSON.stringify({t:'input',k,yaw:mobileYaw,pitch:smallDevice?0:aimPitch}));
+  socket.send(JSON.stringify({t:'input',k,yaw:aimYaw,pitch:smallDevice?0:aimPitch}));
 },50);
 
 function animate(dt){
   elapsed+=dt;
-  updateAimFromCursor();
+  animateAxeWorld(dt);
   for(const f of fireflies){
-    f.t+=dt;f.mesh.position.y+=Math.sin(elapsed*1.2+f.seed)*.004;
+    f.t+=dt;
+    f.mesh.position.y+=Math.sin(elapsed*1.2+f.seed)*.004;
     f.mesh.material.opacity=.36+.23*Math.sin(elapsed*1.8+f.seed*2.1);
   }
   animatePreview(elapsed);
@@ -622,8 +738,9 @@ function animate(dt){
   if(meModel&&phase==='battle'){
     const p=meModel.display;
     const f=new THREE.Vector3(p.x,p.y+1.2,p.z);
-    const orbitRadius=camDistance*Math.cos(FIXED_CAM_PITCH);
-    const toCam=new THREE.Vector3(p.x-Math.sin(FIXED_CAM_YAW)*orbitRadius,p.y+1.5+Math.sin(FIXED_CAM_PITCH)*camDistance,p.z-Math.cos(FIXED_CAM_YAW)*orbitRadius);
+    const orbitRadius=camDistance*Math.cos(FOLLOW_CAM_PITCH);
+    const viewYaw=aimYaw;
+    const toCam=new THREE.Vector3(p.x-Math.sin(viewYaw)*orbitRadius,p.y+2.3+Math.sin(FOLLOW_CAM_PITCH)*camDistance,p.z-Math.cos(viewYaw)*orbitRadius);
     targetCamera.lerp(toCam,Math.min(1,dt*6));targetLook.lerp(f,Math.min(1,dt*8));
   }else{
     targetCamera.lerp(new THREE.Vector3(15,15,-19),Math.min(1,dt*1.7));
@@ -636,29 +753,36 @@ function animate(dt){
     d.x=THREE.MathUtils.lerp(d.x,p.x,t);d.z=THREE.MathUtils.lerp(d.z,p.z,t);d.y=THREE.MathUtils.lerp(d.y,p.y,t);
     d.pitch=THREE.MathUtils.lerp(d.pitch||0,p.pitch||0,t);d.hs=p.hs||0;
     const diff=Math.atan2(Math.sin(p.f-d.f),Math.cos(p.f-d.f));d.f+=diff*t;
+    if(p.id===selfId)d.f=aimYaw;
     m.root.position.set(d.x,d.y,d.z);
-    const bodyTarget=p.bf??d.f;
-    const bodyTurn=Math.atan2(Math.sin(bodyTarget-m.bodyYaw),Math.cos(bodyTarget-m.bodyYaw));
-    m.bodyYaw+=bodyTurn*Math.min(1,dt*4.3);m.root.rotation.y=m.bodyYaw;
-    const armTurn=Math.atan2(Math.sin(d.f-m.bodyYaw),Math.cos(d.f-m.bodyYaw));
-    m.rightArm.rotation.y=THREE.MathUtils.clamp(armTurn,-1.4,1.4);
+    // Exact shared heading; never decouple body, weapon and camera yaw.
+    m.bodyYaw=d.f;m.root.rotation.y=d.f;m.rightArm.rotation.y=0;
     m.root.visible=true;
     const speed=p.dead?0:p.m;
     m.walkPhase+=dt*(5+speed*8);
     const swingWalk=Math.sin(m.walkPhase)*speed*.64;
     const hitLean=(p.stun||0)*Math.sin(elapsed*13+Number(p.id)*2);
     const flail=(p.spin||0)*Math.sin(elapsed*17+Number(p.id));
-    m.leftLeg.rotation.x=swingWalk+hitLean*.52;m.rightLeg.rotation.x=-swingWalk-hitLean*.38;
+    const air=!p.ground&&!p.dead;
+    m.leftLeg.rotation.x=swingWalk+hitLean*.52+(air?-.28:0);m.rightLeg.rotation.x=-swingWalk-hitLean*.38+(air?.34:0);
     m.leftLeg.rotation.z=-flail*.28;m.rightLeg.rotation.z=flail*.28;
     m.leftArm.rotation.x=-swingWalk*.65-.14+hitLean*.65+Math.sin(elapsed*5+Number(p.id))*.06;
     const strike=p.a>0?Math.sin((.78-p.a)*10)*1.10:0;
+    // Unlike the camera, the arm and weapon are driven by real aim yaw/pitch.
     m.rightArm.rotation.x=-.28-(d.pitch||0)*.9-strike*.72-flail*.55+(d.hs>0?Math.sin(elapsed*21)*1.4:0);
-    m.rightArm.rotation.z=(d.hs>0?Math.cos(elapsed*21)*1.30:0)+Math.sin(elapsed*11+Number(p.id))*Math.min(1,p.a*.82)+hitLean*.42;
+    m.rightArm.rotation.z=(d.hs>0?Math.cos(elapsed*21)*1.30:0)+Math.sin(elapsed*11+Number(p.id))*Math.min(1.0,p.a*.82)+hitLean*.42;
     m.root.rotation.z=p.dead?Math.min(1.15,m.root.rotation.z+dt*5):THREE.MathUtils.lerp(m.root.rotation.z,hitLean*.46+flail*.20,dt*11);
     if(p.dead)m.root.position.y-=.15;
-    const airborne=!p.ground&&!p.dead;
-    if(airborne){m.root.position.y+=Math.sin(elapsed*8+Number(p.id))*.025;m.leftLeg.rotation.x-=.28;m.rightLeg.rotation.x+=.34;}
-    const tilt=p.dash>0?-.37:(hitLean*.31+flail*.43);
+    if(p.dash>.01&&elapsed-m.trailAt>.075){
+      m.trailAt=elapsed;
+      const group=new THREE.Group();group.position.set(d.x,d.y+.9,d.z);group.rotation.y=d.f;scene.add(group);
+      const streak=new THREE.Mesh(new THREE.BoxGeometry(.15,.16,1.25),
+        new THREE.MeshBasicMaterial({color:'#7de9f8',transparent:true,opacity:.42,depthWrite:false}));
+      streak.position.z=-.8;group.add(streak);
+      effects.push({group,bits:[],ring:null,extra:[streak],t:0,max:.31,heavy:false});
+    }
+    if(air)m.root.position.y+=Math.sin(elapsed*8+Number(p.id))*.025;
+    const tilt=p.dash>0?-.22:(hitLean*.31+flail*.43);
     m.root.rotation.x=THREE.MathUtils.lerp(m.root.rotation.x,tilt,dt*8);
     m.ring.visible=!p.dead;
     m.nameSprite.visible=!p.dead;
@@ -672,9 +796,10 @@ function animate(dt){
     const from=new THREE.Vector3(d.x,d.y+1.35,d.z);
     const to=from.clone().addScaledVector(dir,2.8);
     const v=aimLine.geometry.attributes.position;v.setXYZ(0,from.x,from.y,from.z);v.setXYZ(1,to.x,to.y,to.z);v.needsUpdate=true;
-    aimDot.position.copy(to);aimDot.scale.setScalar(keys.attack?1.28:1);
+    aimDot.position.copy(to);
+    aimDot.scale.setScalar(keys.attack?1.28:1);
   }
-  // Original-style forest stage has no flashing electric hazard.
+  // No artificial timed electric hazard; the arena is a forest duel ground.
   animateEffects(dt);
   renderer.render(scene,camera);
 }
