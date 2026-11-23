@@ -13,3 +13,58 @@
 .battle-weapon-bar button:hover{filter:brightness(1.32)}
 @media(max-width:760px){.weapons{gap:5px}.battle-weapon-bar{bottom:7px;min-width:0;width:96vw;gap:2px;padding:3px}.battle-weapon-bar button{padding:6px 1px;font-size:10px}.weapon .weapon-ico{font-size:18px}.weapon small{font-size:8px}}
 @media(max-height:780px) and (min-width:761px){.battle-weapon-bar{bottom:110px}.bottom-help{bottom:10px}.ability-strip{bottom:51px}}
+
+
+/* V4: Twilight Forest palette. Original 3D homage, not an asset copy. */
+:root{--bg:#382647;--glass:rgba(47,27,60,.91);--border:rgba(238,173,129,.25);--text:#fff4e9;--muted:#c5a7bb;--aqua:#efad73;--orange:#f7b36e}
+html,body{background:var(--bg)}
+body:before{background:linear-gradient(90deg,rgba(34,20,42,.82) 0%,rgba(35,22,44,.54) 29%,rgba(43,29,57,.02) 78%)}
+body.playing:before{background:linear-gradient(180deg,rgba(31,19,48,.43),transparent 24%,transparent 75%,rgba(34,22,46,.40))}
+.vignette{box-shadow:inset 0 0 130px 24px rgba(36,17,42,.26)}
+#flash.on{background:rgba(255,186,129,.16)}
+#topbar{height:69px}
+.mini-brand{font-size:19px;letter-spacing:1.4px;text-shadow:0 2px 8px #190f2b}
+.mini-brand b{color:#f5b778}
+.logo{border-color:#df9e73;color:#f9cd95;background:#71445255;transform:rotate(-9deg)}
+.mini-brand i{border-color:#d9ac8e;color:#ffdaa6}
+.connection{color:#f2e1dc}.dot,.pulse{background:#bdf49c;box-shadow:0 0 12px #a8e89e}
+.iconButton{background:rgba(70,45,75,.8);border-color:#a8798c55}
+.eyebrow{color:#f1ad77}
+.landing h1{font-size:clamp(56px,6.9vw,102px);text-shadow:0 5px 0 #281b40,0 17px 35px #1b112a}
+.landing h1 span{color:#f9ba75}
+.landing h1 em{color:#ffe4bb}
+.landing>p,.room-panel>p{color:#ead6db}
+.entry-box,.room-panel,.health-panel,.score-panel,.ability,.battle-weapon-bar{
+  background:rgba(48,31,61,.88);border:1px solid rgba(238,165,118,.26);
+  box-shadow:0 12px 40px rgba(22,12,33,.32)
+}
+.entry-box,.room-panel{backdrop-filter:blur(14px)}
+input{background:#32253f;border-color:#87627a;color:#fff6ee}
+input:focus{border-color:#ffbe80}
+.primary{background:linear-gradient(135deg,#f5b778,#eb885f);color:#31223c;box-shadow:0 5px 17px #b56b5c4a}
+.join-row button{background:#8c5b6b;color:#fff5ef}
+.or{color:#cab2c2}.or:before,.or:after{background:#75516c}
+.subtle{border-color:#926581;background:#432d53;color:#f1d7d5}
+.codebar{background:#3b2a4b;border-color:#ba8279}.code{color:#ffd19b}
+.copy{background:#725269;color:#ffe6cb;border-color:#b9817d}
+.weapon{background:#4c355c;border-color:#765477;transition:transform .12s,background .12s}
+.weapon:hover{transform:translateY(-2px)}
+.weapon.active{background:linear-gradient(135deg,#a66068,#7b4d69);border-color:#f7c28a;box-shadow:inset 0 0 18px #f4b87e22}
+.weapon small{color:#e8c5cd}
+#matchClock{color:#ffe8c8;text-shadow:0 2px 10px #200d31}
+.score-title{color:#f2bb8b}.score-line.self{background:#86547366}
+.hp-track{background:#38263c}
+.ability-key{background:#7b4c64;border:1px solid #efb885;color:#ffe6d1}
+.ability-key.ultimate{background:#8b5a69;color:#ffeab6}
+.battle-weapon-bar{border-radius:13px;backdrop-filter:blur(12px)}
+.battle-weapon-bar button{background:#553b62;color:#e8d4d5;border-color:#8e627a}
+.battle-weapon-bar button.active{background:#8b5565;border-color:#f7c185;color:#fff4dc;box-shadow:0 0 12px #f1ba7e44}
+.battle-weapon-bar button:hover{filter:brightness(1.22)}
+.bottom-help kbd{background:#48334f;border-color:#b27c78;color:#fff0de}
+.touchbtn{background:#593e64df;border-color:#dfb39a99}
+.joystick{background:#49335180;border-color:#ffc49888}
+.stick{background:radial-gradient(circle at 35% 30%,#f4bb92cc,#855b78);border-color:#ffc79a;box-shadow:0 0 19px #f8b08233}
+.touchbtn.attack{background:#9f5d69df;border-color:#ffbd8b;color:#fff4d5}
+.touchbtn.ultimate{background:#8c556bdc;border-color:#ffe19a;color:#fff0d0}
+footer{color:#d9b7b7}
+@media(max-width:760px){.landing h1{font-size:clamp(46px,12vw,75px)}.weapon small{color:#e2c2c8}}
