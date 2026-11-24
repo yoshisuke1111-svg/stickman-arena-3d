@@ -34,15 +34,15 @@ test('a fast blade crossing is caught between snapshots and the hit removes angu
   assert.ok(Math.abs(hit.p1.wp.yawVel)<Math.abs(clear.p1.wp.yawVel),'the physical hit also slows the weapon');
 });
 
-test('one physical swing cannot damage the same target on every substep',()=>{
-  const {api,room,p1,p2}=battle({weapon:'blade',input:{attack:true}},{x:.3,z:1.7,hp:1000});
+test('one moving blade cannot damage the same target on every substep',()=>{
+  const {api,room,p1,p2}=battle({weapon:'blade',input:{w:true}},{x:.3,z:2.4,hp:1000});
   for(let i=0;i<10;i++){
-    Object.assign(p2,{x:.3,y:0,z:1.7,vy:0,kvx:0,kvz:0});
+    Object.assign(p2,{x:.3,y:0,z:2.4,vy:0,kvx:0,kvz:0});
     api.tick(room,1/30);
   }
   assert.equal(targetHits(room,p2).length,1);
   assert.ok(p2.hp<1000&&p2.hp>950,'contact has a meaningful hit, not repeated frame damage');
-  assert.ok(p1.attackCd>0);
+  assert.equal(p1.attackCd,0,'no scripted melee attack cooldown');
 });
 
 test('weapon orientation lags a turn, carries momentum past it, and settles',()=>{
@@ -193,18 +193,20 @@ test('an expanding shock shell is occluded by solid cover',()=>{
   assert.ok(run(-4)<100,'the same spacing in open air is within shell reach');
 });
 
-test('weapon switching cannot conjure a replacement while the axe is detached',()=>{
+test('weapon switching is only available outside battle',()=>{
   const {api,room,a,p1}=battle({weapon:'axe',x:-8,z:-8});
   api.throwAxe(room,p1);const released=p1.wp;
   a.receive({t:'weapon',weapon:'hammer'});
-  assert.equal(p1.weapon,'axe');assert.equal(p1.wp,released);assert.equal(p1.wp.mode,'outbound');
+  assert.equal(p1.weapon,'axe');assert.equal(p1.wp,released);
   api.start(room);a.receive({t:'weapon',weapon:'hammer'});
+  assert.equal(p1.weapon,'axe','even a held weapon cannot be changed mid-match');
+  a.receive({t:'lobby'});a.receive({t:'weapon',weapon:'hammer'});
   assert.equal(p1.weapon,'hammer');assert.equal(p1.wp.type,'hammer');assert.equal(p1.wp.mode,'held');
 });
 
 test('changing a held weapon cancels its pending shock movement and shell',()=>{
   const {api,room,a,p1}=battle({weapon:'axe'});
-  api.beginShockBurst(room,p1);a.receive({t:'weapon',weapon:'blade'});api.tick(room,1/30);
+  api.beginShockBurst(room,p1);a.receive({t:'lobby'});a.receive({t:'weapon',weapon:'blade'});
   assert.equal(p1.wp.type,'blade');assert.equal(p1.shockDrive,0);
   assert.equal(room.axePulses.length,0);
 });
@@ -228,4 +230,22 @@ test('returning to lobby and restarting remove transient effects and stale weapo
   assert.equal(p1.wp.mode,'held');assert.equal(p1.wp.travel,0);
   assert.equal(p1.wp.hitTimes.size,0);assert.equal(p1.wp.yawVel,0);
   assert.equal(room.projectiles.length,0);assert.equal(room.bombs.length,0);
+});
+
+test('legacy attack input cannot trigger a melee swing or melee attack event',()=>{
+  const {api,room,a,p1,p2}=battle({weapon:'axe'},{x:1.4,z:1.5});
+  a.receive({t:'input',k:{attack:true},yaw:0,pitch:0});
+  advance(api,room,.8);
+  assert.equal(p2.hp,100);
+  assert.equal(p1.attackCd,0);
+  assert.ok(!room.events.some(e=>e.type==='attack'&&e.id===p1.id));
+});
+test('holding Skill does not fire again until released and pressed',()=>{
+  const {api,room,p1}=battle({weapon:'katana',input:{skill:true}});
+  advance(api,room,.1);p1.skillCd=0;room.events.length=0;
+  advance(api,room,.3);
+  assert.ok(!room.events.some(e=>e.type==='skillcast'&&e.id===p1.id));
+  p1.input={};api.tick(room,1/30);
+  p1.input={skill:true};api.tick(room,1/30);
+  assert.ok(room.events.some(e=>e.type==='skillcast'&&e.id===p1.id));
 });

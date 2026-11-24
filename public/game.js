@@ -8,7 +8,7 @@ const smallDevice=matchMedia('(pointer: coarse)').matches;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,smallDevice?1.25:1.7));
 renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
-renderer.shadowMap.enabled=true;
+renderer.shadowMap.enabled=false;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure=1.28;
@@ -42,136 +42,53 @@ const moonFill=new THREE.DirectionalLight('#a99fff',.5);moonFill.position.set(15
 const blueLight=new THREE.PointLight('#74d9ef',19,33,2);blueLight.position.set(-8,7,7);scene.add(blueLight);
 const amberLight=new THREE.PointLight('#f6ae6e',19,31,2);amberLight.position.set(10,5,-8);scene.add(amberLight);
 
-// Original low-poly autumn forest. All artwork is procedural, with no imported
-// images or meshes from the reference game. Solidity matches server BLOCKS.
-const earth=mat('#39283b'), soil=mat('#6a4a70'), dune=mat('#6f4e73');
-const cliff=mat('#302539'),warmWood=mat('#b96948'),edgeWood=mat('#ee9855');
-const oldWood=mat('#4e384b'), stones=mat('#8d7790'),moss=mat('#66665e');
-box(25.0,.95,25.0,cliff,0,-.66,0);
-box(24.5,.16,24.5,soil,0,-.07,0);
-const plankTexture=(()=>{
-  const c=document.createElement('canvas');c.width=256;c.height=256;
-  const ctx=c.getContext('2d');ctx.fillStyle='#775477';ctx.fillRect(0,0,256,256);
-  for(let i=0;i<600;i++){
-    const x=(i*57.3+Math.sin(i*3.3)*81)%256,y=(i*107.9+Math.cos(i*8)*31)%256;
-    ctx.fillStyle=i%3?'rgba(31,20,49,.12)':'rgba(244,170,122,.085)';
-    ctx.fillRect((x+256)%256,(y+256)%256,1+(i%17),1+(i%3));
-  }
-  for(let y=16;y<256;y+=48){ctx.strokeStyle='rgba(38,26,42,.24)';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(256,y+4);ctx.stroke();}
-  const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(4,4);t.colorSpace=THREE.SRGBColorSpace;return t;
-})();
-const ground=new THREE.Mesh(new THREE.PlaneGeometry(24.25,24.25),new THREE.MeshStandardMaterial({map:plankTexture,roughness:.94,color:'#d2bed5'}));
-ground.rotation.x=-Math.PI/2;ground.position.y=.016;ground.receiveShadow=true;scene.add(ground);
-// Warm, irregular boards around the stage instead of metal neon strips.
-for(let i=-12;i<12;i+=1.65){
-  const w=Math.min(1.7,12-i),j=Math.sin(i*9)*.035;
-  box(w,.17,.34,edgeWood,i+w/2,-.02,12.12+j,false);
-  box(w,.17,.34,warmWood,i+w/2,-.02,-12.12-j,false);
-  box(.34,.17,w,edgeWood,12.12+j,-.02,i+w/2,false);
-  box(.34,.17,w,warmWood,-12.12-j,-.02,i+w/2,false);
-}
-// Physically solid outer walls also exist on the authoritative server.
-// Semi-transparent upper walls keep the fighter visible near the camera.
-const wallStone=mat('#493551'),wallCap=mat('#da8252'),wallUpper=new THREE.MeshStandardMaterial({color:'#856e97',transparent:true,opacity:.24,roughness:.93,side:THREE.DoubleSide,depthWrite:false});
+// Flat-color three-dimensional stage: dark solid platforms, orange rims and
+// a simple purple backdrop, rather than an ornate forest diorama.
+scene.background.set('#624184');
+scene.fog=null;
+const flat=color=>new THREE.MeshBasicMaterial({color});
+const platform=flat('#151324'),surface=flat('#e18b28'),rim=flat('#ffb455'),floorTop=flat('#594078'),edge=flat('#141322');
+box(24.8,1.0,24.8,platform,0,-.53,0,false);
+box(24.25,.08,24.25,floorTop,0,-.025,0,false);
 for(const side of [-1,1]){
-  box(25.5,3.6,.67,wallStone,0,1.8,side*12.08);
-  box(.67,3.6,25.5,wallStone,side*12.08,1.8,0);
-  box(25.5,.18,.78,wallCap,0,3.58,side*12.08,false);
-  box(.78,.18,25.5,wallCap,side*12.08,3.58,0,false);
-  box(25.5,4.4,.08,wallUpper,0,5.85,side*12.08,false);
-  box(.08,4.4,25.5,wallUpper,side*12.08,5.85,0,false);
+  box(24.7,.20,.42,surface,0,.055,side*12.05,false);
+  box(.42,.20,24.7,surface,side*12.05,.055,0,false);
+  box(24.7,1.05,.40,edge,0,-.43,side*12.09,false);
+  box(.40,1.05,24.7,edge,side*12.09,-.43,0,false);
 }
-for(const x of [-12,12])for(const z of [-12,12]){
-  box(.95,4.45,.95,wallStone,x,2.2,z);
-  box(1.08,.28,1.08,wallCap,x,4.48,z,false);
+const upper=new THREE.MeshBasicMaterial({color:'#251d38',transparent:true,opacity:.12,depthWrite:false,side:THREE.DoubleSide});
+for(const side of [-1,1]){
+  box(24.7,.22,.35,platform,0,.18,side*11.8,false);
+  box(.35,.22,24.7,platform,side*11.8,.18,0,false);
+  box(24.7,7.65,.04,upper,0,4.12,side*11.8,false);
+  box(.04,7.65,24.7,upper,side*11.8,4.12,0,false);
 }
 const blocks=[[-4.4,-1.6,2.7,2.7,2.15],[4.4,1.6,2.7,2.7,2.15],[-1.6,5.5,2.2,1.9,1.25],[1.6,-5.5,2.2,1.9,1.25]];
 for(const [x,z,w,d,h] of blocks){
-  box(w,h,d,oldWood,x,h/2,z);
-  box(w,.17,d,soil,x,h-.085,z);
-  // Broken-looking wooden ledge cap, with a bright copper-coloured rim.
-  box(w+.17,.13,d+.20,edgeWood,x,h-.065,z,false);
-  box(w-.21,.05,d-.12,soil,x,h+.015,z,false);
-  for(let n=-1;n<=1;n++){
-    box(.055,h*.69,.04,warmWood,x+n*(w*.31),h*.38,z+d/2+.018,false);
-  }
+  box(w,h,d,platform,x,h/2,z,false);
+  box(w,.16,d,surface,x,h-.08,z,false);
+  box(w,.045,d,rim,x,h-.022,z,false);
 }
-// Scattered leaves, tufts and layered stones (visual only, no collision).
-const stageDressing=new THREE.Group();scene.add(stageDressing);
-const rnd=(seed)=>{let a=Math.sin(seed*132.23+41.92)*43758.5453;return a-Math.floor(a);};
-for(let i=0;i<120;i++){
-  const x=(rnd(i+2)*2-1)*11.5,z=(rnd(i+63)*2-1)*11.5;
-  if(Math.hypot(x,z)<1.5)continue;
-  const s=.09+rnd(i+13)*.15;
-  if(i%6===0){
-    const stone=new THREE.Mesh(new THREE.DodecahedronGeometry(s*1.8,0),stones);stone.scale.set(1.5,.25,1);
-    stone.rotation.y=rnd(i+44)*Math.PI;stone.position.set(x,.065,z);stageDressing.add(stone);
-  }else{
-    const leaf=new THREE.Mesh(new THREE.CircleGeometry(s,3),new THREE.MeshBasicMaterial({color:i%5===0?'#d48959':'#8d646d',side:THREE.DoubleSide}));
-    leaf.rotation.x=-Math.PI/2;leaf.rotation.z=rnd(i+77)*6;leaf.position.set(x,.029+rnd(i+22)*.008,z);stageDressing.add(leaf);
-  }
-}
-// Far scenery: hills, moon and crooked trees silhouetted against lavender fog.
-const scenery=new THREE.Group();scene.add(scenery);
-const hillColors=['#4b335f','#463457','#564069','#392d4e'];
-for(let i=0;i<21;i++){
-  const a=i*Math.PI*2/21,r=41+(i%4)*6;
-  const hill=new THREE.Mesh(new THREE.IcosahedronGeometry(1,1),mat(hillColors[i%4]));
-  hill.scale.set(14+(i%3)*4,6+(i%4)*2,13+(i%3)*4);
-  hill.position.set(Math.sin(a)*r,-2.8,Math.cos(a)*r);scenery.add(hill);
-}
-function treeBranch(parent,a,b,width,material){
-  const v1=new THREE.Vector3(...a),v2=new THREE.Vector3(...b);
-  const delta=v2.clone().sub(v1),length=delta.length();
-  const mesh=new THREE.Mesh(new THREE.CylinderGeometry(width*.65,width,length,5),material);
-  mesh.position.copy(v1).add(v2).multiplyScalar(.5);mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
-  parent.add(mesh);
-}
-const darkTrunk=mat('#2e2544'),dimTrunk=mat('#483153');
-for(let i=0;i<24;i++){
-  const a=i*2.399963,r=19+(i%5)*4.1;
-  const x=Math.sin(a)*r,z=Math.cos(a)*r;
-  const h=4.5+rnd(i+4)*5;
-  const tree=new THREE.Group();tree.position.set(x,-1.65,z);scenery.add(tree);
-  const m=i%3===0?dimTrunk:darkTrunk;
-  treeBranch(tree,[0,0,0],[.20*Math.sin(i*4),h,0],.38,m);
-  for(let j=0;j<4;j++){
-    const theta=i*2.1+j*1.67;const height=h*(.48+j*.105);
-    const start=[Math.sin(i*4)*height/h*.2,height,0];
-    const tip=[Math.sin(theta)*(1.2+j*.28),height+1.5+(j%2)*.8,Math.cos(theta)*(1.1+j*.3)];
-    treeBranch(tree,start,tip,.13,m);
-    treeBranch(tree,tip,[tip[0]*1.3,tip[1]+.7,tip[2]*1.28],.061,m);
-  }
-}
-const moon=new THREE.Mesh(new THREE.SphereGeometry(5.8,32,18),new THREE.MeshBasicMaterial({color:'#e5c9ee',fog:false}));
-moon.position.set(-43,38,56);scenery.add(moon);
-const moonHalo=new THREE.Sprite(new THREE.SpriteMaterial({color:'#dd9fdb',transparent:true,opacity:.16,blending:THREE.AdditiveBlending}));
-moonHalo.position.copy(moon.position);moonHalo.scale.set(20,20,1);scenery.add(moonHalo);
-for(let i=0;i<18;i++){
-  const x=Math.sin(i*8.1)*(22+i%4*4),z=Math.cos(i*8.1)*(19+i%5*4);
-  const grave=new THREE.Mesh(new THREE.BoxGeometry(.65,.85,.18),mat(i%2?'#45354f':'#54425b'));
-  grave.rotation.y=i*.53;grave.position.set(x,-1.25,z);scenery.add(grave);
+// Distant low-contrast silhouettes, kept outside the combat space.
+const silhouetteColors=['#50346e','#583876','#4b3067'];
+for(let i=0;i<14;i++){
+  const a=i*Math.PI*2/14;
+  const hill=new THREE.Mesh(new THREE.IcosahedronGeometry(1,1),flat(silhouetteColors[i%3]));
+  hill.scale.set(14+(i%3)*4,6+(i%4)*2,12);
+  hill.position.set(Math.sin(a)*34,-3,Math.cos(a)*34);
+  scene.add(hill);
 }
 const fireflies=[];
-for(let i=0;i<42;i++){
-  const hue=i%7===0?'#ffcc84':'#8bcfba';
-  const fleck=new THREE.Mesh(new THREE.OctahedronGeometry(.038+(i%4)*.014),new THREE.MeshBasicMaterial({color:hue,transparent:true,opacity:.48}));
-  const x=(rnd(i+30)*2-1)*15,z=(rnd(i+81)*2-1)*15;
-  fleck.position.set(x,.5+rnd(i+100)*5,z);scenery.add(fleck);
-  fireflies.push({mesh:fleck,seed:i,t:0});
-}
-// The original videos show no timed central laser or hazard.
-const hazardCircle={material:{opacity:0}},hazardRing={material:{opacity:0,color:new THREE.Color('#ff966f')},rotation:{z:0},scale:{setScalar(){}}};
 
 const cyl=new THREE.CylinderGeometry(1,1,1,9),ballGeo=new THREE.SphereGeometry(1,14,10),boxGeo=new THREE.BoxGeometry(1,1,1);
 function bodyPiece(parent,geo,material,pos,scale){const m=new THREE.Mesh(geo,material);m.position.set(...pos);m.scale.set(...scale);m.castShadow=true;parent.add(m);return m;}
 function buildFighter(p){
   const root=new THREE.Group();scene.add(root);
-  const dark=mat('#291b36',.05,.83),colorMat=mat(p.c||'#43e7db',.06,.77,.08),glow=mat(p.c||'#43e7db',.03,.7,.17);
+  const colorMat=new THREE.MeshBasicMaterial({color:p.c||'#43e7db'}),dark=colorMat,glow=colorMat;
   bodyPiece(root,ballGeo,colorMat,[0,1.95,0],[.29,.29,.29]);
-  bodyPiece(root,cyl,colorMat,[0,1.23,0],[.15,.86,.15]);
-  bodyPiece(root,ballGeo,colorMat,[0,.8,0],[.19,.15,.18]);
-  bodyPiece(root,ballGeo,glow,[0,1.6,0],[.17,.1,.17]);
+  bodyPiece(root,cyl,colorMat,[0,1.23,0],[.105,.86,.105]);
+  bodyPiece(root,ballGeo,colorMat,[0,.8,0],[.11,.11,.11]);
+  bodyPiece(root,ballGeo,glow,[0,1.6,0],[.11,.10,.11]);
   const leftArm=new THREE.Group(),rightArm=new THREE.Group(),leftLeg=new THREE.Group(),rightLeg=new THREE.Group();
   leftArm.position.set(-.26,1.54,0);rightArm.position.set(.26,1.54,0);
   leftLeg.position.set(-.15,.79,0);rightLeg.position.set(.15,.79,0);
@@ -245,8 +162,8 @@ function labelSprite(m,p){
   const label=p.n+String(p.hp)+p.dead;if(m.lastLabel===label)return;m.lastLabel=label;
   const canvas=document.createElement('canvas');canvas.width=320;canvas.height=90;
   const ctx=canvas.getContext('2d');
-  ctx.fillStyle='rgba(45,27,57,.78)';ctx.beginPath();ctx.roundRect(10,6,300,76,15);ctx.fill();
-  ctx.font='bold 28px sans-serif';ctx.textAlign='center';ctx.fillStyle=p.c;ctx.fillText(p.n.slice(0,14),160,38,285);
+  ctx.clearRect(0,0,320,90);
+  ctx.font='bold 28px sans-serif';ctx.textAlign='center';ctx.fillStyle='#ffffff';ctx.fillText(p.n.slice(0,14),160,38,285);
   ctx.fillStyle='#58445f';ctx.fillRect(26,56,268,11);
   ctx.fillStyle=p.dead?'#a84b5c':p.c;ctx.fillRect(26,56,268*Math.max(0,p.hp)/100,11);
   const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;
@@ -419,8 +336,8 @@ function animatePreview(t){previewGroup.visible=!joined;
 // Network: the Node/WebSocket server owns hit detection, HP, knockback, scores and timers.
 let socket, selfId=null,roomCode='',phase='home',joined=false,isHost=false,latestState=null,localWeapon='blade',reconnectTimer=null;
 let previousHp=100, toastTimer=null,soundEnabled=false,audioCtx=null;
-let keys={w:false,s:false,a:false,d:false,jump:false,attack:false,thrust:false,skill:false,super:false};
-const touch={w:false,s:false,a:false,d:false,jump:false,attack:false,thrust:false,skill:false,super:false};
+let keys={w:false,s:false,a:false,d:false,jump:false,skill:false,super:false};
+const touch={w:false,s:false,a:false,d:false,jump:false,skill:false,super:false};
 const weaponNames={blade:'BLADE',hammer:'HAMMER',blaster:'BLASTER',katana:'KATANA',bomb:'BOMB',axe:'AXE'};
 const weaponHotkeys=['blade','hammer','blaster','katana','bomb','axe'];
 function send(packet){if(socket?.readyState===WebSocket.OPEN){socket.send(JSON.stringify(packet));return true;}toast('サーバーに接続していません');return false;}
@@ -568,7 +485,7 @@ window.addEventListener('keydown',e=>{
   if(e.target instanceof HTMLInputElement || !joined || phase!=='battle')return;
   const action=keyMap[e.code];if(action){keys[action]=true;e.preventDefault();}
   if(e.code==='KeyR'){aimPitch=0;toast('武器を水平に戻した');}
-  if(/^Digit[1-6]$/.test(e.code))chooseWeapon(weaponHotkeys[Number(e.code.slice(-1))-1]);
+
 });
 window.addEventListener('keyup',e=>{const action=keyMap[e.code];if(action)keys[action]=false;});
 window.addEventListener('blur',()=>{for(const k in keys)keys[k]=false;for(const k in touch)touch[k]=false;});
@@ -582,7 +499,6 @@ const changeFacing=(dx,dy)=>{
 renderer.domElement.addEventListener('pointerdown',e=>{
   if(!joined||phase!=='battle')return;
   if(e.button===0){
-    keys.attack=true;
     try{renderer.domElement.requestPointerLock?.()?.catch?.(()=>{});}catch{}
   }
 });
@@ -594,9 +510,6 @@ renderer.domElement.addEventListener('pointermove',e=>{
   if(!joined||phase!=='battle'||e.pointerType==='touch')return;
   if(document.pointerLockElement!==renderer.domElement)changeFacing(e.movementX||0,e.movementY||0);
 });
-renderer.domElement.addEventListener('pointerup',e=>{if(e.button===0)keys.attack=false;});
-renderer.domElement.addEventListener('pointercancel',()=>keys.attack=false);
-window.addEventListener('mouseup',e=>{if(e.button===0)keys.attack=false;});
 renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
 renderer.domElement.addEventListener('wheel',e=>{camDistance=Math.max(11,Math.min(22,camDistance+Math.sign(e.deltaY)*.65));e.preventDefault();},{passive:false});
 const joystick=$('joystick'),stick=$('stick');let stickId=null;
@@ -606,10 +519,11 @@ function moveStick(e){
   if(mag>radius){dx*=radius/mag;dy*=radius/mag;}
   stick.style.transform=`translate(${dx}px,${dy}px)`;
   touch.w=dy<-radius*.2;touch.s=dy>radius*.2;touch.a=dx<-radius*.2;touch.d=dx>radius*.2;
+  touch.jump=dy<-radius*.82;
 }
 joystick.addEventListener('pointerdown',e=>{e.preventDefault();stickId=e.pointerId;joystick.setPointerCapture(e.pointerId);moveStick(e);});
 joystick.addEventListener('pointermove',e=>{if(e.pointerId===stickId)moveStick(e);});
-function stopStick(e){if(e.pointerId!==stickId)return;stickId=null;stick.style.transform='translate(0px,0px)';for(const k of ['w','s','a','d'])touch[k]=false;}
+function stopStick(e){if(e.pointerId!==stickId)return;stickId=null;stick.style.transform='translate(0px,0px)';for(const k of ['w','s','a','d','jump'])touch[k]=false;}
 joystick.addEventListener('pointerup',stopStick);joystick.addEventListener('pointercancel',stopStick);
 for(const b of document.querySelectorAll('[data-touch]')){
   const k=b.dataset.touch;
@@ -624,6 +538,7 @@ setInterval(()=>{
     const sx=Number(!!touch.d)-Number(!!touch.a),sz=Number(!!touch.w)-Number(!!touch.s);
     if(sx<0)aimYaw+=.075;else if(sx>0)aimYaw-=.075;
     // On touch screens the horizontal stick steers the whole fighter and camera.
+    if(sx!==0&&!touch.s)k.w=true;
     k.a=false;k.d=false;
   }
   socket.send(JSON.stringify({t:'input',k,yaw:aimYaw,pitch:smallDevice?0:aimPitch}));
@@ -678,7 +593,7 @@ function animate(dt){
     if(air)m.root.position.y+=Math.sin(elapsed*8+Number(p.id))*.025;
     const tilt=p.dash>0?-.22:(hitLean*.31+flail*.43);
     m.root.rotation.x=THREE.MathUtils.lerp(m.root.rotation.x,tilt,dt*8);
-    m.ring.visible=!p.dead;
+    m.ring.visible=false;
     m.nameSprite.visible=!p.dead;
     m.headMat.color.set(p.hit>.20?'#f4feff':p.c);m.headMat.emissiveIntensity=p.hit>.20?.72:.06;
     if(p.inv>0&&p.inv<1.2)m.root.visible=Math.floor(elapsed*14)%2===0;
@@ -698,15 +613,8 @@ function animate(dt){
   }
   animateAxeWorld(dt);
   const me=playerModels.get(selfId);
-  aimGuide.visible=!!me&&joined&&phase==='battle';
-  if(aimGuide.visible){
-    const d=me.display,dir=new THREE.Vector3(Math.sin(d.f)*Math.cos(d.pitch||0),Math.sin(d.pitch||0),Math.cos(d.f)*Math.cos(d.pitch||0));
-    const from=new THREE.Vector3(d.x,d.y+1.35,d.z);
-    const to=from.clone().addScaledVector(dir,2.8);
-    const v=aimLine.geometry.attributes.position;v.setXYZ(0,from.x,from.y,from.z);v.setXYZ(1,to.x,to.y,to.z);v.needsUpdate=true;
-    aimDot.position.copy(to);
-    aimDot.scale.setScalar(keys.attack?1.28:1);
-  }
+  // The reference has no aim line or target reticle.
+  aimGuide.visible=false;
   // No artificial timed electric hazard; the arena is a forest duel ground.
   animateEffects(dt);
   renderer.render(scene,camera);

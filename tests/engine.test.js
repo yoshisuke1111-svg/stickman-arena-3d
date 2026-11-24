@@ -13,15 +13,15 @@ test('creates a five-character invite, joins two clients, and starts a match',()
   assert.equal(p1.hp,100);assert.equal(p2.hp,100);
 });
 
-test('blade starts a physical swing and only damages a target its blade reaches',()=>{
-  const {api,room,p1,p2}=battle({weapon:'blade'},{x:.3,z:1.7});
-  api.attack(room,p1);
-  assert.equal(p2.hp,100,'a swing command alone cannot deal damage');
+test('movement, not an attack command, causes physical blade contact',()=>{
+  const {api,room,p1,p2}=battle({weapon:'blade'},{x:.3,z:2.7});
+  api.attack(room,p1);advance(api,room,.2);
+  assert.equal(p2.hp,100,'legacy attack command does not swing a melee weapon');
+  p1.input={w:true};advance(api,room,.4);
+  assert.ok(p2.hp<100,'moving the actual blade into the target damages it');
+  place(api,p1,{weapon:'blade',input:{w:true}});place(api,p2,{x:0,z:-2});
   advance(api,room,.4);
-  assert.ok(p2.hp<100,'the visible blade passes through the nearby target');
-  place(api,p1,{weapon:'blade'});place(api,p2,{x:0,z:-2});
-  api.attack(room,p1);advance(api,room,.4);
-  assert.equal(p2.hp,100,'the same short swing cannot reach a target behind the wielder');
+  assert.equal(p2.hp,100,'the weapon does not damage a target behind it');
 });
 
 test('blaster projectiles cause authoritative damage on arrival',()=>{
@@ -55,14 +55,12 @@ test('six selectable weapons are approved and unknown values safely fall back',(
   assert.equal(api.safeWeapon('anything-else'),'blade');
 });
 
-test('katana recovers sooner than axe while axe has the stronger base impact',()=>{
-  const {api,room,p1,p2}=battle({weapon:'katana'},{x:.3,z:1.8});
-  api.attack(room,p1);const katanaCooldown=p1.attackCd;
-  assert.equal(p2.hp,100,'both weapons wait for actual contact');
-  advance(api,room,.35);assert.ok(p2.hp<100);
-  place(api,p1,{weapon:'axe'});place(api,p2,{x:.3,z:1.8});
-  api.attack(room,p1);assert.ok(p1.attackCd>katanaCooldown*2);
+test('katana and axe retain different shapes and damage, driven by contact',()=>{
+  const {api,room,p1,p2}=battle({weapon:'katana',input:{w:true}},{x:.3,z:3.1});
   assert.ok(api.WPN.axe.damage>api.WPN.katana.damage);
+  assert.ok(api.WPN.axe.cd>api.WPN.katana.cd);
+  advance(api,room,.35);assert.ok(p2.hp<100);
+  place(api,p1,{weapon:'axe',input:{w:true}});place(api,p2,{x:.3,z:2.2});
   advance(api,room,.4);assert.ok(p2.hp<100);
 });
 
@@ -122,10 +120,11 @@ test('axe shuffle bag contains exactly the three observed skills in one cycle',(
   assert.deepEqual([...seen].sort(),['bubbleTunnel','axeThrow','shockBurst'].sort());
 });
 
-test('walking into reach automatically initiates a swing without a click',()=>{
-  const {api,room,p1,p2}=battle({weapon:'blade',input:{w:true}},{x:.3,z:2});
+test('walking causes a contact hit without starting a scripted melee attack',()=>{
+  const {api,room,p1,p2}=battle({weapon:'blade',input:{w:true}},{x:.3,z:2.5});
   advance(api,room,.4);
-  assert.ok(p2.hp<100);assert.ok(room.events.some(e=>e.type==='attack'));
+  assert.ok(p2.hp<100);
+  assert.ok(!room.events.some(e=>e.type==='attack'&&e.id===p1.id),'no automatic attack animation');
 });
 
 test('platform tops catch falling fighters without letting them sink in',()=>{

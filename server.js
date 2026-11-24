@@ -78,7 +78,7 @@ function spawnPoint(room,p) {
   }
   p.x=chosen[0]+random(-.45,.45); p.z=chosen[1]+random(-.45,.45); p.y=0;
   p.vy=0; p.kvx=0; p.kvz=0; p.hp=100; p.dead=false; p.respawnIn=0; p.invuln=1.25;
-  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.axeBag=[];p.chargeProgress=0;p.jumpLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0; p.shockDrive=0; p.shockAge=0; p.strikeSide=1; p.motionVX=0; p.motionVY=0; p.motionVZ=0; p.wp=null; resetWeaponPose(p);
+  p.facing=Math.atan2(-p.x,-p.z);p.moveFacing=p.facing;p.axeBag=[];p.chargeProgress=0;p.jumpLatch=false;p.skillLatch=false;p.superLatch=false; p.pitch=0; p.grounded=true; p.driveX=0; p.driveZ=0; p.aimMotion=0; p.hammerSpin=0; p.hammerPulse=0; p.swing=0; p.dashTime=0; p.hazardNext=0; p.stagger=0; p.spin=0; p.shockDrive=0; p.shockAge=0; p.strikeSide=1; p.motionVX=0; p.motionVY=0; p.motionVZ=0; p.wp=null; resetWeaponPose(p);
 }
 function makePlayer(name,ws,isBot=false) {
   return {
@@ -167,7 +167,8 @@ function damage(room,target,from,dmg,push=5,origin=from,contact=null) {
 function attack(room,p) {
   if(p.attackCd>0 || p.dead || p.invuln>.85 || room.phase!=='battle') return;
   const pose=ensureWeaponPose(p);
-  if(pose.mode!=='held')return;
+  // Only ranged weapons emit shots. Melee motion comes from movement, aim, and skills.
+  if(pose.mode!=='held'||!['blaster','bomb'].includes(p.weapon))return;
   const w=WPN[p.weapon]; p.attackCd=w.cd; p.swing=.38;
   event(room,'attack',{id:p.id,weapon:p.weapon,f:p.facing,pitch:p.pitch,x:pose.x,y:pose.y,z:pose.z});
   if(p.weapon==='bomb') {
@@ -181,12 +182,6 @@ function attack(room,p) {
     const dir=aimDirection(p.facing,p.pitch);
     room.projectiles.push({id:crypto.randomUUID().slice(0,8),owner:p.id,x:pose.x+dir.x*.9,y:pose.y+dir.y*.9,z:pose.z+dir.z*.9,
       dx:dir.x,dy:dir.y,dz:dir.z,life:1.3,color:p.color});
-  } else {
-    // A command applies torque. Damage only happens later when this same
-    // blade/head crosses an opponent; a button press itself cannot hit.
-    p.strikeSide=-(p.strikeSide||1);
-    pose.yawVel+=p.strikeSide*(p.weapon==='katana'?11.5:p.weapon==='blade'?10:8.8);
-    pose.pitchVel+=2.0;
   }
 }
 
@@ -684,7 +679,6 @@ function simulateBot(room,p,dt){
   const jump=(blocked&&p.grounded&&Math.random()<.18)||
     (p.botMode===1&&p.grounded&&Math.random()<.009);
   p.input={w:front>.25,s:front<-.25,d:right>.25,a:right<-.25,jump,
-    attack:d<(ranged?9.2:3.3)&&!blocked,
     skill:d<7.5&&Math.random()<.026,super:d<8&&Math.random()<.013};
 }
 
@@ -747,13 +741,13 @@ function tick(room,dt) {
     else p.grounded=false;
     p.motionVX=(p.x-p.previousPos.x)/dt;p.motionVY=(p.y-p.previousPos.y)/dt;p.motionVZ=(p.z-p.previousPos.z)/dt;
     if(p.y<-9){die(room,p,null);continue;}
-    // Ordinary swing follows movement, as in the supplied footage. Click remains
-    // an optional deliberate swing for precise PC combat.
-    const melee= !['blaster','bomb'].includes(p.weapon);
-    const near=melee&&[...room.players.values()].some(q=>q.id!==p.id&&!q.dead&&dist(p,q)<WPN[p.weapon].range+.5);
-    if((!melee&&k.attack)||(melee&&(k.attack||(near&&(p.moveAmount>.2||p.aimMotion>.15||p.dashTime>0)))))attack(room,p);
-    if(k.skill)skill(room,p);
-    if(k.super)superAttack(room,p);
+    // Melee never initiates an attack based on range, proximity or clicks.
+    // The physical weapon follows the movement/aim spring and contacts bodies.
+    // Preserve automatic ranged firing for the two experimental ranged weapons.
+    if(['blaster','bomb'].includes(p.weapon)&&(p.moveAmount>.2||p.aimMotion>.15))attack(room,p);
+    if(k.skill&&!p.skillLatch)skill(room,p);
+    if(k.super&&!p.superLatch)superAttack(room,p);
+    p.skillLatch=!!k.skill;p.superLatch=!!k.super;
 
     if(p.dashTime===0)p.dashHits.clear();
   }
@@ -810,7 +804,7 @@ const wss=new WebSocketServer({server,path:'/ws',maxPayload:2048});
 wss.on('connection',ws=>{
   ws.isAlive=true;
   ws.on('pong',()=>{ws.isAlive=true;});
-  safeSend(ws,{t:'hello',version:'0.4.0'});
+  safeSend(ws,{t:'hello',version:'0.5.0'});
   ws.on('message',(data)=>{
     let m;
     try {m=JSON.parse(data.toString());} catch {return;}
@@ -827,7 +821,7 @@ wss.on('connection',ws=>{
       if(m.t==='input'){
         const k=m.k;
         if(!k||typeof k!=='object'||Array.isArray(k))return;
-        p.input={};for(const key of ['w','s','a','d','jump','attack','skill','super'])p.input[key]=k[key]===true;
+        p.input={};for(const key of ['w','s','a','d','jump','skill','super'])p.input[key]=k[key]===true;
         if(Number.isFinite(m.yaw)){
           const aimed=Math.atan2(Math.sin(m.yaw),Math.cos(m.yaw));
           p.aimMotion=Math.min(1.3,p.aimMotion+Math.abs(Math.atan2(Math.sin(aimed-p.facing),Math.cos(aimed-p.facing)))*2.5);
@@ -836,7 +830,7 @@ wss.on('connection',ws=>{
         if(Number.isFinite(m.pitch)){const v=clamp(m.pitch,-1.10,1.20);p.aimMotion=Math.min(1.3,p.aimMotion+Math.abs(v-p.pitch));p.pitch=v;}
       } else if(m.t==='weapon'){
         const nextWeapon=safeWeapon(m.weapon);
-        if(ensureWeaponPose(p).mode==='held'&&nextWeapon!==p.weapon){
+        if(room.phase!=='battle'&&ensureWeaponPose(p).mode==='held'&&nextWeapon!==p.weapon){
           p.weapon=nextWeapon;p.shockDrive=0;p.shockAge=0;p.hammerSpin=0;p.hammerPulse=0;p.dashTime=0;p.chargeProgress=0;p.swing=0;p.dashHits.clear();
           room.axePulses=room.axePulses.filter(effect=>effect.owner!==p.id);
           resetWeaponPose(p);
