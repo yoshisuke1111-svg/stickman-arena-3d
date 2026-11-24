@@ -440,6 +440,7 @@ function handleEvents(events){
     }
     else if(e.type==='skillcast'){castEffect(e);playSound(e.weapon==='katana'?760:265,.22,'sawtooth');}
     else if(e.type==='impact'){if(!['axeFrontShock','tunnelPulse','hammerSpin'].includes(e.kind))burst('hit',e.x,e.y,e.z,'#d4fbff');}
+    else if(e.type==='weaponClash'){burst('hit',e.x,e.y,e.z,'#effaff');playSound(570,.075,'triangle');}
     else if(e.type==='projectileBreak'||e.type==='bounce'){burst('hit',e.x,e.y,e.z,'#a4eaff');}
     else if(e.type==='super'){castEffect(e);playSound(140,.36,'sawtooth');}
     else if(e.type==='explode'){burst('explode',e.x,e.y,e.z,e.color||'#ffba66');playSound(95,.45,'sawtooth');}

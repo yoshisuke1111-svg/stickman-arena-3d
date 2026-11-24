@@ -50,6 +50,12 @@ const WEAPON_SHAPES={
   axe:{head:1.47,halfWidth:.46,radius:.31},
   hammer:{head:1.35,halfWidth:.45,radius:.25}
 };
+// Relative inertial parameters, tuned for this 3D arena rather than copied
+// from the 2D reference. The long katana has more leverage than the short blade.
+const WEAPON_DYNAMICS={
+  blade:{mass:1.0,inertia:1.05},katana:{mass:.86,inertia:1.55},
+  axe:{mass:2.05,inertia:2.8},hammer:{mass:2.65,inertia:3.05}
+};
 const rooms = new Map();
 const random = (a,b) => Math.random()*(b-a)+a;
 const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
@@ -200,7 +206,8 @@ function resetWeaponPose(p){
   const grip=weaponGripPoint(p);
   p.wp={...grip,type:p.weapon,mode:'held',yaw:p.facing,pitch:p.pitch-.22,roll:0,
     vx:0,vy:0,vz:0,yawVel:0,pitchVel:0,travel:0,hitTimes:new Map(),
-    previousVX:0,previousVY:0,previousVZ:0};
+    previousVX:0,previousVY:0,previousVZ:0,
+    recoil:{x:0,y:0,z:0,vx:0,vy:0,vz:0},clashTimes:new Map()};
   return p.wp;
 }
 function ensureWeaponPose(p){return !p.wp||p.wp.type!==p.weapon?resetWeaponPose(p):p.wp;}
@@ -273,11 +280,116 @@ function segmentClosest(a,b,c,d){
   const first=vecAdd(a,u,s),second=vecAdd(c,v,t);
   return {distance:vecLength(vecSub(first,second)),first,second,s,t};
 }
+// Point Jacobians convert a contact impulse into angular and wrist motion.
+const scaleVec=(v,s)=>({x:v.x*s,y:v.y*s,z:v.z*s});
+function weaponAxes(pose,at){
+  const r=vecSub(at,pose),s=Math.sin(pose.yaw),c=Math.cos(pose.yaw);
+  return {yaw:{x:r.z,y:0,z:-r.x},pitch:{x:-s*r.y,y:s*r.x+c*r.z,z:-c*r.y}};
+}
+function inverseContactMass(p,at,n){
+  const pose=p.wp,body=WEAPON_DYNAMICS[p.weapon],axes=weaponAxes(pose,at);
+  const angular=(vecDot(axes.yaw,n)**2+vecDot(axes.pitch,n)**2)/body.inertia;
+  return angular+(pose.mode==='held'?.55:1)/body.mass;
+}
+function applyWeaponImpulse(p,at,impulse,transfer=true){
+  const pose=p.wp,body=WEAPON_DYNAMICS[p.weapon];
+  if(!body)return;
+  const axes=weaponAxes(pose,at);
+  pose.yawVel=clamp(pose.yawVel+vecDot(axes.yaw,impulse)/body.inertia,-15,15);
+  pose.pitchVel=clamp(pose.pitchVel+vecDot(axes.pitch,impulse)/body.inertia,-9,9);
+  if(pose.mode==='held'){
+    const r=pose.recoil;
+    r.vx+=impulse.x/body.mass*.55;r.vy+=impulse.y/body.mass*.55;r.vz+=impulse.z/body.mass*.55;
+    const speed=Math.hypot(r.vx,r.vy,r.vz),cap=Math.min(1,4/Math.max(.001,speed));
+    r.vx*=cap;r.vy*=cap;r.vz*=cap;
+    if(transfer){
+      // A little of the same impulse reaches the wielder; the arm absorbs most.
+      p.kvx=clamp(p.kvx+impulse.x*.10,-32,32);
+      p.kvz=clamp(p.kvz+impulse.z*.10,-32,32);
+    }
+  }else{
+    pose.vx+=impulse.x/body.mass;pose.vy+=impulse.y/body.mass;pose.vz+=impulse.z/body.mass;
+  }
+}
+function advanceWrist(pose,h){
+  const r=pose.recoil;
+  for(const axis of ['x','y','z']){
+    const v='v'+axis;r[v]+=(-95*r[axis]-12*r[v])*h;r[axis]+=r[v]*h;
+  }
+  const length=Math.hypot(r.x,r.y,r.z);
+  if(length>.30){
+    const normal=scaleVec(r,1/length),out=r.vx*normal.x+r.vy*normal.y+r.vz*normal.z;
+    r.x*=.30/length;r.y*=.30/length;r.z*=.30/length;
+    if(out>0){r.vx-=out*normal.x;r.vy-=out*normal.y;r.vz-=out*normal.z;}
+  }
+}
+function segmentVelocity(before,after,t,h){
+  return scaleVec(vecSub(vecLerp(after.a,after.b,t),vecLerp(before.a,before.b,t)),1/h);
+}
+function rewindWeapon(state,t){
+  const {p,old}=state,w=p.wp;
+  w.yaw=old.yaw+angleDelta(w.yaw,old.yaw)*t;
+  w.pitch=old.pitch+(w.pitch-old.pitch)*t;w.roll=old.roll+(w.roll-old.roll)*t;
+  if(w.mode!=='held'){
+    const at=vecLerp(old,w,t);w.x=at.x;w.y=at.y;w.z=at.z;
+  }
+}
+// Each pair is checked once per common substep. Moving blade/head capsules
+// are swept together, so fast weapons can parry without frame tunnelling.
+function resolveWeaponClash(room,a,b,h){
+  const p=a.p,q=b.p,wp=p.wp,wq=q.wp;
+  if(!WEAPON_DYNAMICS[p.weapon]||!WEAPON_DYNAMICS[q.weapon]||a.caught||b.caught)return;
+  if(p.invuln>0||q.invuln>0)return;
+  const radius=a.after.radius+b.after.radius;
+  const swept=Math.max(vecLength(vecSub(a.after.a,a.before.a)),vecLength(vecSub(a.after.b,a.before.b)))+
+    Math.max(vecLength(vecSub(b.after.a,b.before.a)),vecLength(vecSub(b.after.b,b.before.b)));
+  const samples=Math.max(1,Math.ceil(swept/.075));
+  for(let j=0;j<=samples;j++){
+    const t=j/samples;
+    const aa=vecLerp(a.before.a,a.after.a,t),ab=vecLerp(a.before.b,a.after.b,t);
+    const ba=vecLerp(b.before.a,b.after.a,t),bb=vecLerp(b.before.b,b.after.b,t);
+    const c=segmentClosest(aa,ab,ba,bb);
+    if(c.distance>radius)continue;
+    if(BLOCKS.some(block=>segmentBoxHit(c.first,c.second,block,.015)))continue;
+    const va=segmentVelocity(a.before,a.after,c.s,h),vb=segmentVelocity(b.before,b.after,c.t,h);
+    const rel=vecSub(va,vb);
+    let n;
+    if(c.distance>1e-5)n=scaleVec(vecSub(c.first,c.second),1/c.distance);
+    else{
+      const previous=vecSub(vecLerp(a.before.a,a.before.b,c.s),vecLerp(b.before.a,b.before.b,c.t));
+      const len=vecLength(previous);
+      if(len>1e-5)n=scaleVec(previous,1/len);
+      else {const speed=vecLength(rel);if(speed<.45)continue;n=scaleVec(rel,-1/speed);}
+    }
+    const closing=-vecDot(rel,n);
+    if(closing<.45)continue; // Resting or separating weapons never create energy.
+    const denom=inverseContactMass(p,c.first,n)+inverseContactMass(q,c.second,n);
+    const magnitude=clamp(1.40*closing/Math.max(.08,denom),0,8.5);
+    const force=scaleVec(n,magnitude);
+    // Rewind angular motion to first contact; then the actual recoil drives the
+    // next substep. No damage or scripted attack on a weapon-only collision.
+    const stop=Math.max(0,t-.045);
+    rewindWeapon(a,stop);rewindWeapon(b,stop);
+    applyWeaponImpulse(p,c.first,force);applyWeaponImpulse(q,c.second,scaleVec(force,-1));
+    a.after=weaponSegment(p);b.after=weaponSegment(q);
+    if(closing>1.5&&(wp.clashTimes.get(q.id)||0)<=room.elapsed){
+      wp.clashTimes.set(q.id,room.elapsed+.16);wq.clashTimes.set(p.id,room.elapsed+.16);
+      const center=vecLerp(c.first,c.second,.5);
+      event(room,'weaponClash',{...center,color:'#e5f7ff',force:magnitude,a:p.id,b:q.id});
+    }
+    return;
+  }
+}
 function heldWeaponBlocked(p,oldPose,oldSegment){
   const pose=p.wp,newSegment=weaponSegment(p,pose);
   let hit=solidAlong(pose,newSegment.a,newSegment.radius)||solidAlong(pose,newSegment.b,newSegment.radius);
   hit ||= solidAlong(oldSegment.a,newSegment.a,newSegment.radius)||solidAlong(oldSegment.b,newSegment.b,newSegment.radius);
   if(!hit)return;
+  const at=vecLerp(newSegment.a,newSegment.b,.65);
+  const speed=Math.max(0,-vecDot({x:pose.vx,y:pose.vy,z:pose.vz},hit.normal));
+  // The existing wall constraint stops penetration. The wrist also absorbs the
+  // impact, instead of the weapon instantly snapping to the aimed direction.
+  if(speed>.4)applyWeaponImpulse(p,at,scaleVec(hit.normal,Math.min(3,speed*.35)),false);
   pose.yaw=oldPose.yaw;pose.pitch=oldPose.pitch;pose.roll=oldPose.roll;
   pose.yawVel*=-.22;pose.pitchVel*=-.22;
   // If the body has moved into the resting blade, let the wrist slide along the
@@ -306,12 +418,13 @@ function testWeaponContact(room,p,before,after,dt,stepFraction){
     const center=q.previousPos?vecLerp(q.previousPos,q,stepFraction):{x:q.x,y:q.y,z:q.z};
     // Body movement contributes relative speed too: walking through a stationary
     // blade is contact, but resting two unmoving weapons together is not damage.
-    const velocity={x:(va.x+vb.x)/(.00001+2*dt)-(q.motionVX||0),y:(va.y+vb.y)/(.00001+2*dt)-(q.motionVY||0),z:(va.z+vb.z)/(.00001+2*dt)-(q.motionVZ||0)};
-    const speed=vecLength(velocity);if(speed<2.3)continue;
+    const targetVelocity={x:q.motionVX||0,y:q.motionVY||0,z:q.motionVZ||0};
     for(let j=0;j<=samples;j++){
       const t=j/samples,a=vecLerp(before.a,after.a,t),b=vecLerp(before.b,after.b,t);
       const closest=segmentClosest(a,b,{x:center.x,y:center.y+.35,z:center.z},{x:center.x,y:center.y+1.88,z:center.z});
       if(closest.distance>after.radius+.32)continue;
+      const velocity=vecSub(segmentVelocity(before,after,closest.s,dt),targetVelocity);
+      const speed=vecLength(velocity);if(speed<2.3)continue;
       const bodyPoint=closest.second;
       // No hit through cover even when a fast sweep crosses a corner.
       if(BLOCKS.some(block=>segmentBoxHit(closest.first,bodyPoint,block,.025)))continue;
@@ -325,6 +438,10 @@ function testWeaponContact(room,p,before,after,dt,stepFraction){
         // flash at the attacker's origin. Keep enough momentum to follow through.
         if(pose.mode==='held'){pose.yawVel*=.60;pose.pitchVel*=.65;}
         else {pose.vx*=.83;pose.vy*=.83;pose.vz*=.83;}
+        // Equal-direction reaction at the actual contact point. The lever arm
+        // determines how much the weapon turns; axial impacts flex the wrist.
+        const strength=Math.min(3.2,speed*.17)*Math.sqrt(WEAPON_DYNAMICS[p.weapon].mass);
+        applyWeaponImpulse(p,closest.first,scaleVec(velocity,-strength/speed),false);
       }
       break;
     }
@@ -334,6 +451,7 @@ function throwAxe(room,p){
   const pose=ensureWeaponPose(p);if(p.weapon!=='axe'||pose.mode!=='held')return false;
   const dir=aimDirection(p.facing,p.pitch);
   pose.mode='outbound';pose.travel=0;pose.flightAge=0;pose.hitTimes.clear();
+  pose.recoil={x:0,y:0,z:0,vx:0,vy:0,vz:0};
   pose.vx=dir.x*14+(p.motionVX||0)*.35;
   pose.vy=dir.y*14+(p.motionVY||0)*.15+.8;
   pose.vz=dir.z*14+(p.motionVZ||0)*.35;
@@ -383,6 +501,7 @@ function moveThrownWeapon(room,p,dt){
     const relative=Math.hypot(pose.vx-(p.motionVX||0),pose.vy-(p.motionVY||0),pose.vz-(p.motionVZ||0));
     if(pose.flightAge>.15&&distance<.66&&relative<18){
       pose.mode='held';pose.x=grip.x;pose.y=grip.y;pose.z=grip.z;
+      pose.recoil={x:0,y:0,z:0,vx:0,vy:0,vz:0};
       pose.yawVel=clamp(pose.yawVel,-2,2);pose.pitchVel=clamp(pose.pitchVel,-2,2);
       pose.vx=p.motionVX||0;pose.vy=p.motionVY||0;pose.vz=p.motionVZ||0;
       event(room,'weaponCatch',{id:p.id,x:grip.x,y:grip.y,z:grip.z});
@@ -392,21 +511,28 @@ function moveThrownWeapon(room,p,dt){
   return false;
 }
 function advanceWeapons(room,dt){
+  const steps=Math.max(1,Math.ceil(dt/(1/120))),h=dt/steps,states=[];
   for(const p of room.players.values()){
     const pose=ensureWeaponPose(p);if(p.dead)continue;
-    const steps=Math.max(1,Math.ceil(dt/(1/120))),h=dt/steps;
-    const start={x:pose.x,y:pose.y,z:pose.z},grip=weaponGripPoint(p);
+    const r=pose.recoil;
+    const start={x:pose.x-(pose.mode==='held'?r.x:0),y:pose.y-(pose.mode==='held'?r.y:0),z:pose.z-(pose.mode==='held'?r.z:0)},grip=weaponGripPoint(p);
     if(pose.mode==='held'){
       const dvx=(p.motionVX||0)-pose.previousVX,dvy=(p.motionVY||0)-pose.previousVY,dvz=(p.motionVZ||0)-pose.previousVZ;
       const side=dvx*Math.cos(p.facing)-dvz*Math.sin(p.facing),front=dvx*Math.sin(p.facing)+dvz*Math.cos(p.facing);
       pose.yawVel-=clamp(side*.085,-1.8,1.8);pose.pitchVel+=clamp(front*.07-dvy*.075,-1.6,1.6);
     }
     pose.previousVX=p.motionVX||0;pose.previousVY=p.motionVY||0;pose.previousVZ=p.motionVZ||0;
-    for(let step=0;step<steps;step++){
+    states.push({p,pose,start,grip});
+  }
+  for(let step=0;step<steps;step++){
+    for(const state of states){
+      const {p,pose,start,grip}=state;
       const oldPose={x:pose.x,y:pose.y,z:pose.z,yaw:pose.yaw,pitch:pose.pitch,roll:pose.roll},before=weaponSegment(p,pose);
       let caught=false;
       if(pose.mode==='held'){
-        const next=vecLerp(start,grip,(step+1)/steps);pose.vx=(next.x-pose.x)/h;pose.vy=(next.y-pose.y)/h;pose.vz=(next.z-pose.z)/h;
+        advanceWrist(pose,h);
+        const next=vecAdd(vecLerp(start,grip,(step+1)/steps),pose.recoil);
+        pose.vx=(next.x-pose.x)/h;pose.vy=(next.y-pose.y)/h;pose.vz=(next.z-pose.z)/h;
         pose.x=next.x;pose.y=next.y;pose.z=next.z;
         if(WEAPON_SHAPES[p.weapon]){
           const heavy=p.weapon==='axe'||p.weapon==='hammer';
@@ -421,10 +547,18 @@ function advanceWeapons(room,dt){
         }else {pose.yaw=p.facing;pose.pitch=p.pitch;pose.roll=0;}
       }else caught=moveThrownWeapon(room,p,h);
       if(caught){start.x=grip.x;start.y=grip.y;start.z=grip.z;}
-      const after=weaponSegment(p,pose);
-      if(!caught)testWeaponContact(room,p,before,after,h,(step+1)/steps);
+      Object.assign(state,{old:oldPose,before,after:weaponSegment(p,pose),caught});
     }
+    for(let i=0;i<states.length;i++)for(let j=i+1;j<states.length;j++){
+      if(!states[i].p.dead&&!states[j].p.dead)resolveWeaponClash(room,states[i],states[j],h);
+    }
+    for(const state of states){
+      if(!state.caught&&!state.p.dead)testWeaponContact(room,state.p,state.before,state.after,h,(step+1)/steps);
+    }
+  }
+  for(const {pose} of states){
     for(const [id,until] of pose.hitTimes)if(until<room.elapsed-2||!room.players.has(id))pose.hitTimes.delete(id);
+    for(const [id,until] of pose.clashTimes)if(until<room.elapsed-1||!room.players.has(id))pose.clashTimes.delete(id);
   }
 }
 
