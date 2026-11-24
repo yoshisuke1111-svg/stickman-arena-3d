@@ -1,7 +1,9 @@
 import * as THREE from '/vendor/three.module.js';
 import { disposeVisual, slashGeometry, createFlowTube, updateFlowTube, animateFlowTube, createShockShell, updateShockShell, animateShockShell, setWeaponPose, poseHoldingArm, createRibbon, updateRibbon, createDragon, updateDragonTail } from './combat-visuals.js';
+import { createAbilityHud } from './ability-hud.js';
 
 const $ = id => document.getElementById(id);
+const abilityHud = createAbilityHud();
 const host = $('world');
 const renderer = new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
 const smallDevice=matchMedia('(pointer: coarse)').matches;
@@ -376,6 +378,7 @@ function connect(){
     }
   };
   socket.onclose=()=>{
+    abilityHud.sync(null,false);
     $('netStatus').classList.add('off');$('netStatus').lastChild.textContent='再接続中';
     reconnectTimer=setTimeout(connect,1700);
   };
@@ -409,14 +412,13 @@ function updateScreen(){
   $('roomHint').textContent=isHost?'部屋主です。CPUを追加して1人でも練習できます。':'部屋主がゲームを開始するまで準備中です。';
 }
 function updateStats(m,me){
+  abilityHud.sync(me,m.phase==='battle');
   $('matchClock').textContent=`${String(Math.floor(m.time/60)).padStart(2,'0')}:${String(m.time%60).padStart(2,'0')}`;
   if(me){
     $('myName').textContent=me.n;$('hpText').textContent=me.dead?'KO':`${me.hp} HP`;
     $('hpFill').style.width=`${Math.max(0,me.hp)}%`;
     $('hpFill').style.background=me.hp<25?'linear-gradient(90deg,#eb5f66,#f6a26a)':'linear-gradient(90deg,#32c4bb,#7affd1)';
     $('weaponName').textContent=weaponNames[me.w]||me.w;
-    $('dashCd').textContent=me.cd[1]>0?me.cd[1].toFixed(1)+'s':'READY';
-    $('superCd').textContent=me.cd[2]>0?me.cd[2].toFixed(1)+'s':'READY';
   }
   const board=$('leaderboard');board.replaceChildren();
   for(const p of [...m.players].sort((a,b)=>b.k-a.k).slice(0,8)){
@@ -546,6 +548,7 @@ setInterval(()=>{
 
 function animate(dt){
   elapsed+=dt;
+  abilityHud.render();
   for(const f of fireflies){
     f.t+=dt;
     f.mesh.position.y+=Math.sin(elapsed*1.2+f.seed)*.004;
@@ -622,3 +625,4 @@ function animate(dt){
 function frame(){requestAnimationFrame(frame);const dt=Math.min(clock.getDelta(),.05);animate(dt);}frame();
 addEventListener('resize',()=>{const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();});
 connect();
+

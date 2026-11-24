@@ -201,12 +201,78 @@ test('outer walls stop movement and knockback at floor and platform heights',()=
   assert.ok(p1.x<=11.46);
 });
 
-test('dragon and Super shots remain trackable and stop at the outer wall',()=>{
-  const {api,room,p1}=battle({weapon:'katana',x:10.5,facing:Math.PI/2});
-  api.skill(room,p1);assert.ok(room.projectiles[0].speed<=10);
-  advance(api,room,.7);assert.equal(room.projectiles.length,0);
-  api.superAttack(room,p1);assert.ok(room.projectiles.every(b=>b.speed<=10));
-  advance(api,room,1.0);assert.equal(room.projectiles.length,0);
+test('dragon and Super slashes cross the outer wall on their original trajectory until their lifetime ends',()=>{
+  const {api,room,p1}=battle({weapon:'katana',x:8.5,facing:Math.PI/2},{x:-8,z:8});
+  api.skill(room,p1);api.superAttack(room,p1);
+  const originals=room.projectiles.map(b=>({...b}));
+  assert.equal(originals.length,6);assert.ok(originals.every(b=>b.speed<=10));
+  advance(api,room,.8);
+  assert.equal(room.projectiles.length,6,'wall contact must not remove any of the strikes');
+  for(const original of originals){
+    const b=room.projectiles.find(b=>b.id===original.id);
+    assert.ok(b.x>11.45,`${b.kind} crosses the arena edge`);
+    for(const axis of ['x','y','z']){
+      assert.equal(b['d'+axis],original['d'+axis],'wall contact must not reflect the direction');
+      assert.ok(Math.abs(b[axis]-(original[axis]+original['d'+axis]*original.speed*.8))<1e-8);
+    }
+    assert.ok(Math.abs(b.life-(original.life-.8))<1e-8,'wall contact must not shorten its lifetime');
+  }
+  assert.ok(!room.events.some(e=>e.type==='projectileBreak'));
+  advance(api,room,2.1);
+  assert.equal(room.projectiles.length,0,'the existing lifetime still removes expired strikes');
+});
+
+test('dragon and slashes cross solid cover without a wall break or change of direction',()=>{
+  for(const kind of ['dragon','slash']){
+    const {api,room,p1}=battle({x:-8,z:-1.6,facing:Math.PI/2});
+    api.wave(room,p1,kind,0,{speed:8.6,life:2.8});
+    const b=room.projectiles[0],start=b.x;
+    advance(api,room,.8);
+    assert.equal(room.projectiles[0],b,kind);
+    assert.ok(b.x>-3.05,'strike emerges from the far side of the cover');
+    assert.ok(Math.abs(b.x-start-8.6*.8)<1e-8);
+    assert.equal(b.dx,1);assert.equal(b.dy,0);
+    assert.ok(!room.events.some(e=>e.type==='projectileBreak'));
+  }
+});
+
+test('dragon and slash contact still damages a fighter behind cover with their original piercing rules',()=>{
+  for(const kind of ['dragon','slash']){
+    const {api,room,p1,p2}=battle({x:-8,z:-1.6,facing:Math.PI/2},{x:-2.5,z:-1.6});
+    api.wave(room,p1,kind,0,{speed:8.6,life:2.8,radius:.6,damage:25,push:5,pierce:kind==='dragon'});
+    advance(api,room,.45);
+    assert.equal(p2.hp,75,`${kind} must reach the target through cover`);
+    assert.equal(room.projectiles.length,kind==='dragon'?1:0,'only the non-piercing slash ends on fighter contact');
+    advance(api,room,.5);
+    assert.equal(p2.hp,75,'one strike cannot repeatedly damage the same target');
+    assert.ok(!room.events.some(e=>e.type==='projectileBreak'));
+  }
+});
+
+test('blaster rounds still stop at cover and outer walls',()=>{
+  for(const scenario of [
+    {shooter:{x:-8,z:-1.6},target:{x:-2.5,z:-1.6}},
+    {shooter:{x:10.1,z:0},target:{x:-8,z:8}}
+  ]){
+    const {api,room,p1,p2}=battle({weapon:'blaster',facing:Math.PI/2,...scenario.shooter},scenario.target);
+    api.attack(room,p1);assert.equal(room.projectiles.length,1);
+    advance(api,room,.5);
+    assert.equal(room.projectiles.length,0);
+    assert.equal(p2.hp,100);
+    assert.ok(room.events.some(e=>e.type==='projectileBreak'));
+  }
+});
+
+test('bombs retain outer-wall and platform-top bounces',()=>{
+  const {api,room,p1}=battle({weapon:'bomb',x:10.5,facing:Math.PI/2});
+  api.attack(room,p1);const bomb=room.bombs[0];
+  api.advanceBombs(room,.1);
+  assert.ok(bomb.x<=11.45);assert.ok(bomb.vx<0,'the wall reflects the thrown bomb');
+  assert.ok(room.bombs.includes(bomb));
+  Object.assign(bomb,{x:4.4,z:1.6,y:2.9,vx:0,vz:0,vy:-2,fuse:1});
+  api.advanceBombs(room,.2);
+  assert.ok(Math.abs(bomb.y-2.39)<1e-8);assert.ok(bomb.vy>0,'platform tops still bounce bombs');
+  assert.ok(room.bombs.includes(bomb));
 });
 
 test('axe tube is installed in state and the axe throw uses the existing weapon',()=>{
@@ -236,3 +302,4 @@ test('sword charge accelerates across multiple frames and sustains its movement'
   assert.ok(p1.dashTime>0,'forward movement remains active well beyond the first frames');
   assert.ok(p1.z>2);
 });
+

@@ -100,7 +100,7 @@ function packPlayer(p) {
   const wp=ensureWeaponPose(p);
   return {id:p.id,n:p.name,c:p.color,w:p.weapon,x:+p.x.toFixed(2),y:+p.y.toFixed(2),z:+p.z.toFixed(2),f:+p.facing.toFixed(3),bf:+p.facing.toFixed(3),pitch:+p.pitch.toFixed(3),hs:+p.hammerSpin.toFixed(2),
     hp:Math.ceil(p.hp),dead:p.dead,k:p.kills,d:p.deaths,s:p.score,bot:p.isBot,a:+p.swing.toFixed(2),hit:+p.hit.toFixed(2),
-    m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[+p.attackCd.toFixed(1),+p.skillCd.toFixed(1),+p.superCd.toFixed(1)],dash:+p.dashTime.toFixed(2),shock:+p.shockDrive.toFixed(2),
+    m:+p.moveAmount.toFixed(2),ground:p.grounded,inv:+p.invuln.toFixed(2),stun:+p.stagger.toFixed(2),spin:+p.spin.toFixed(2),cd:[p.attackCd,p.skillCd,p.superCd].map(seconds=>Math.ceil(Math.max(0,seconds)*1000)/1000),cdMax:[WPN[p.weapon].cd,SKILL_COOLDOWN[p.weapon],SUPER_COOLDOWN[p.weapon]],dash:+p.dashTime.toFixed(2),shock:+p.shockDrive.toFixed(2),
     wp:{mode:wp.mode,x:+wp.x.toFixed(3),y:+wp.y.toFixed(3),z:+wp.z.toFixed(3),yaw:+wp.yaw.toFixed(4),pitch:+wp.pitch.toFixed(4),roll:+wp.roll.toFixed(4),vx:+wp.vx.toFixed(3),vy:+wp.vy.toFixed(3),vz:+wp.vz.toFixed(3)}};
 }
 function packState(room) {
@@ -754,6 +754,9 @@ function tick(room,dt) {
   advanceWeapons(room,dt);
   for(let i=room.projectiles.length-1;i>=0;i--){
     const b=room.projectiles[i];b.life-=dt;b.age=(b.age||0)+dt;
+    // Energy strikes pass through arena geometry. Physical rounds still collide;
+    // lifetime and fighter contact remain independent of wall contact.
+    const passesWalls=b.kind==='dragon'||b.kind==='slash';
     const speed=b.speed??(b.kind==='blaster'?16:8.8),travel=speed*dt;
     const steps=Math.max(1,Math.ceil(travel/.19));
     let remove=b.life<=0;
@@ -762,7 +765,7 @@ function tick(room,dt) {
       b.x+=b.dx*travel/steps;b.y+=(b.dy||0)*travel/steps;b.z+=b.dz*travel/steps;b.travel=(b.travel||0)+travel/steps;
       const collisionRadius=b.kind==='dragon'?.44:b.kind==='slash'?.25:.15;
       const oldPoint={x:oldX,y:oldY,z:oldZ};
-      const collision=solidAlong(oldPoint,b,collisionRadius);
+      const collision=passesWalls?null:solidAlong(oldPoint,b,collisionRadius);
       if(collision){
         const contact=vecLerp(oldPoint,b,collision.t);
         b.x=contact.x;b.y=contact.y;b.z=contact.z;
@@ -774,7 +777,7 @@ function tick(room,dt) {
       for(const q of room.players.values()){
         if(q.id===b.owner||q.dead||b.hitIds?.has(q.id))continue;
         if(Math.hypot(b.x-q.x,b.z-q.z)<radius+.32&&Math.abs(b.y-(q.y+1.2))<1.55){
-          if(isBlocked(b,{x:q.x,y:q.y+1.2,z:q.z}))continue;
+          if(!passesWalls&&isBlocked(b,{x:q.x,y:q.y+1.2,z:q.z}))continue;
           if(damage(room,q,owner,b.damage??17,b.push??5)){
             if(!b.hitIds)b.hitIds=new Set();b.hitIds.add(q.id);
             if(!b.pierce){remove=true;break;}
@@ -804,7 +807,7 @@ const wss=new WebSocketServer({server,path:'/ws',maxPayload:2048});
 wss.on('connection',ws=>{
   ws.isAlive=true;
   ws.on('pong',()=>{ws.isAlive=true;});
-  safeSend(ws,{t:'hello',version:'0.5.0'});
+  safeSend(ws,{t:'hello',version:'0.5.1'});
   ws.on('message',(data)=>{
     let m;
     try {m=JSON.parse(data.toString());} catch {return;}
@@ -862,3 +865,4 @@ const pingTimer=setInterval(()=>{
 },30000);
 server.listen(PORT,'0.0.0.0',()=>console.log(`Stick Arena 3D listening on http://localhost:${PORT}`));
 for(const sig of ['SIGINT','SIGTERM'])process.once(sig,()=>{clearInterval(tickTimer);clearInterval(pingTimer);wss.close();server.close(()=>process.exit(0));});
+

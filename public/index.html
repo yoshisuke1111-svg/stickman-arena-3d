@@ -61,7 +61,29 @@
   <div id="message" class="message hidden"></div>
   <div id="mobileControls" class="mobile-controls">
     <div id="joystick" class="joystick"><div id="stick" class="stick"></div></div>
-    <div class="mobile-actions"><button class="touchbtn ultimate" data-touch="super"><span class="ability-symbol">✦</span><span>Super</span><small id="superCd">READY</small><kbd>Q</kbd></button><button class="touchbtn skill" data-touch="skill"><span class="ability-symbol">◒</span><span>Skill</span><small id="dashCd">READY</small><kbd>E</kbd></button></div>
+    <div class="mobile-actions">
+      <button class="touchbtn ultimate" data-touch="super" aria-label="Super" title="Super (Q)">
+        <span class="cooldown-mask" aria-hidden="true"></span>
+        <svg class="ability-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+          <defs><radialGradient id="super-orb"><stop stop-color="#f0ffff"/><stop offset=".24" stop-color="#9dffff"/><stop offset=".6" stop-color="#22d7f4"/><stop offset="1" stop-color="#1478b6"/></radialGradient></defs>
+          <path d="M8 29 5 26 7 35 17 37M34 7 42 12 42 24M33 41 39 36" fill="none" stroke="#48c3df" stroke-width="2.1" stroke-linecap="round"/>
+          <circle cx="25" cy="24" r="17" fill="#116997" stroke="#4fa6c7" stroke-width="1.8"/>
+          <circle cx="25" cy="24" r="13.5" fill="url(#super-orb)"/>
+          <ellipse cx="23" cy="22" rx="5" ry="6" fill="#e6ffff" opacity=".65"/>
+        </svg>
+        <span class="ability-label">Super</span>
+      </button>
+      <button class="touchbtn skill" data-touch="skill" aria-label="Skill" title="Skill (E)">
+        <span class="cooldown-mask" aria-hidden="true"></span>
+        <svg class="ability-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+          <defs><linearGradient id="skill-blade" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2b9ab3"/><stop offset=".55" stop-color="#50dff0"/><stop offset="1" stop-color="#d1ffff"/></linearGradient></defs>
+          <path d="M10 6C25 3 38 16 39 34L13 44C26 32 26 19 15 14L21 12Z" fill="url(#skill-blade)"/>
+          <path d="M13 44 39 34 41 36 15 46Z" fill="#dcf6ee"/>
+          <path d="M25 9C33 15 37 24 39 34L35 35C35 24 31 15 25 9Z" fill="#a9fcff" opacity=".65"/>
+        </svg>
+        <span class="ability-label">Skill</span>
+      </button>
+    </div>
   </div>
 </div>
 

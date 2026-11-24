@@ -1,6 +1,6 @@
 {
   "name": "stick-arena-3d",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Original browser 3D stickman arena multiplayer game",
   "type": "module",
@@ -17,3 +17,4 @@
     "ws": "^8.18.3"
   }
 }
+
