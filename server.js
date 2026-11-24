@@ -162,10 +162,18 @@ function damage(room,target,from,dmg,push=5,origin=from,contact=null) {
   if(contact && Math.hypot(contact.vx,contact.vz)>.25){dx=contact.vx;dz=contact.vz;}
   let mag=Math.hypot(dx,dz);
   if(mag<.01){ dx=Math.sin(from?.facing||0); dz=Math.cos(from?.facing||0);mag=1;}
+  const oldVy=target.vy;
   target.kvx+=dx/mag*push; target.kvz+=dz/mag*push;target.vy=Math.max(target.vy,3.5+push*.08);
   if(contact)target.vy+=clamp(contact.vy*.12,-.4,2.5);
   target.grounded=false;
-  if(target.wp?.mode==='held'){target.wp.yawVel+=clamp(dx/mag*push*.14,-2.2,2.2);target.wp.pitchVel+=push*.11;}
+  if(target.wp?.mode==='held'&&WEAPON_DYNAMICS[target.weapon]){
+    // The hand is accelerated with the body, but the weapon tends to keep
+    // its velocity. Apply the inertial reaction in world coordinates.
+    const segment=weaponSegment(target),center=vecLerp(segment.a,segment.b,.5);
+    const strength=Math.min(2.7,push*.17)*Math.sqrt(WEAPON_DYNAMICS[target.weapon].mass);
+    applyWeaponImpulse(target,center,{x:-dx/mag*strength,
+      y:-Math.min(1,Math.max(0,target.vy-oldVy)*.15),z:-dz/mag*strength},false);
+  }
   event(room,'hit',{x:contact?.x??target.x,y:contact?.y??target.y+1.2,z:contact?.z??target.z,color:target.color,dmg,weapon:contact?.weapon,force:push});
   if(target.hp<=0) die(room,target,from);
   return true;
@@ -359,7 +367,12 @@ function resolveWeaponClash(room,a,b,h){
       const previous=vecSub(vecLerp(a.before.a,a.before.b,c.s),vecLerp(b.before.a,b.before.b,c.t));
       const len=vecLength(previous);
       if(len>1e-5)n=scaleVec(previous,1/len);
-      else {const speed=vecLength(rel);if(speed<.45)continue;n=scaleVec(rel,-1/speed);}
+      else {
+        const centers=vecSub(vecLerp(a.before.a,a.before.b,.5),vecLerp(b.before.a,b.before.b,.5));
+        const separation=vecLength(centers);
+        if(separation<1e-5)continue;
+        n=scaleVec(centers,1/separation);
+      }
     }
     const closing=-vecDot(rel,n);
     if(closing<.45)continue; // Resting or separating weapons never create energy.

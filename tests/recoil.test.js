@@ -5,7 +5,7 @@ import {battle,advance,place} from './engine-harness.js';
 const clashes=room=>room.events.filter(e=>e.type==='weaponClash');
 const length=r=>Math.hypot(r.x,r.y,r.z);
 function facingPair(weaponA='blade',weaponB='blade'){
-  const state=battle({weapon:weaponA,x:0,z:-2.2,input:{w:true}},{weapon:weaponB,x:0,z:2.2,facing:Math.PI,input:{w:true}});
+  const state=battle({weapon:weaponA,x:0,z:-2.2,input:{w:true}},{weapon:weaponB,x:.56,z:2.2,facing:Math.PI,input:{w:true}});
   return state;
 }
 test('approaching opposing weapons exchange physical impulses before either body is reached',()=>{
@@ -55,4 +55,27 @@ test('restarting resets wrist motion and pair contact history',()=>{
   for(const p of [p1,p2]){
     assert.equal(length(p.wp.recoil),0);assert.equal(p.wp.recoil.vx,0);assert.equal(p.wp.clashTimes.size,0);
   }
+});
+
+test('an incoming hit makes the held weapon lag in the world-space impact direction',()=>{
+  for(const yaw of [0,Math.PI/2]){
+    const {api,room,p1,p2}=battle({x:-8,z:-8},{weapon:'katana',facing:yaw,x:0,z:0});
+    const forward={x:Math.sin(yaw),z:Math.cos(yaw)};
+    api.damage(room,p2,p1,10,8,{x:-forward.x*2,z:-forward.z*2});
+    const wrist=p2.wp.recoil;
+    assert.ok(wrist.vx*forward.x+wrist.vz*forward.z<-.4);
+    assert.ok(p2.kvx*forward.x+p2.kvz*forward.z>7);
+    assert.equal(p2.hp,90);
+  }
+});
+test('the detached axe transfers momentum into an opposing weapon without being replaced',()=>{
+  const {api,room,p1,p2}=battle({weapon:'axe',x:0,z:-2},{weapon:'blade',x:.56,z:3,facing:Math.PI});
+  api.throwAxe(room,p1);const axe=p1.wp;
+  let event;
+  for(let i=0;i<18&&!event;i++){api.tick(room,1/30);event=clashes(room)[0];}
+  assert.ok(event,'the flying axe head meets the held blade');
+  assert.equal(p1.wp,axe);assert.notEqual(axe.mode,'held');
+  assert.ok(axe.vz<13.9,'the collision changes the real flight velocity');
+  assert.ok(p2.wp.recoil.vz>0,'the other weapon receives the opposite reaction');
+  assert.equal(p1.hp,100);assert.equal(p2.hp,100);
 });
